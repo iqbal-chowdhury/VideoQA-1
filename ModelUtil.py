@@ -243,15 +243,36 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 	axis = [1,0]+list(range(2,3))  # axis = [1,0,2]
 	embeded_words = tf.transpose(embeded_words, perm=axis) # permutate the input_x --> timestemp, batch_size, input_dims
 
+
+
 	input_embeded_words = tf.TensorArray(
             dtype=embeded_words.dtype,
             size=timesteps,
             tensor_array_name='input_embeded_words_q')
 
+
 	if hasattr(input_embeded_words, 'unstack'):
 		input_embeded_words = input_embeded_words.unstack(embeded_words)
 	else:
 		input_embeded_words = input_embeded_words.unpack(embeded_words)	
+
+
+	# preprocess mask
+	if len(mask.get_shape()) == len(input_shape)-1:
+		mask = tf.expand_dims(mask,dim=-1)
+	
+	mask = tf.transpose(mask,perm=axis)
+
+	input_mask = tf.TensorArray(
+		dtype=mask.dtype,
+		size=timesteps,
+		tensor_array_name='input_mask_q'
+		)
+
+	if hasattr(input_mask, 'unstack'):
+		input_mask = input_mask.unstack(mask)
+	else:
+		input_mask = input_mask.unpack(mask)
 
 
 	hidden_state = tf.TensorArray(
@@ -267,6 +288,7 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 
 	def step(time, hidden_state, h_tm1):
 		x_t = input_embeded_words.read(time) # batch_size * dim
+		mask_t = input_mask.read(time)
 
 		preprocess_x_r = matmul_wx(x_t, W_r, b_r, output_dims)
 		preprocess_x_z = matmul_wx(x_t, W_z, b_z, output_dims)
@@ -276,7 +298,11 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 		z = tf.nn.sigmoid(preprocess_x_z+ matmul_uh(U_z,h_tm1))
 		hh = tf.nn.tanh(preprocess_x_h+ matmul_uh(U_h,h_tm1))
 
+		
 		h = (1-z)*hh + z*h_tm1
+
+		tiled_mask_t = tf.tile(mask_t, tf.stack([1, tf.shape(h)[1]]))
+		h = tf.where(tiled_mask_t, h, h_tm1)
 
 		hidden_state.write(time, h)
 
@@ -370,13 +396,14 @@ if __name__=='__main__':
 	sess = tf.Session()
 	sess.run(init)
 	with sess.as_default():
-		for i in range(1000):
+		for i in range(1):
 			data_x = np.random.randint(0,10,size=(2,timesteps),dtype='int32')
 			data_y = np.zeros((2,num_class))
 			data_y[:,1]=1
-			_, l, output_embed = sess.run([train,loss,embeded_words],feed_dict={input_question:data_x,y:data_y})
+			_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
 			print(l)
-			print(output_embed)
+			print(data_x)
+			print(mask_p)
 
 
 	

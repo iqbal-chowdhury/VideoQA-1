@@ -1,3 +1,7 @@
+import os
+# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+
 import tensorflow as tf
 
 import numpy as np
@@ -85,8 +89,13 @@ def get_init_state(x, output_dims):
 	return initial_state
 
 '''
-	x: batch_size, timesteps , dims
-	num_class: number of class : ucf-101: 101
+	function: getVideoEncoder
+	parameters:
+
+		x: batch_size, timesteps , dims
+		output_dims: the output of the GRU dimensions
+		num_class: number of class : ucf-101: 101
+
 '''
 # def getModel(x, timesteps, input_dims, output_dims, num_class):
 def getVideoEncoder(x, output_dims, num_class):
@@ -152,7 +161,7 @@ def getVideoEncoder(x, output_dims, num_class):
 
 		h = (1-z)*hh + z*h_tm1
 
-		hidden_state.write(time, h)
+		hidden_state = hidden_state.write(time, h)
 
 		return (time+1,hidden_state,h)
 
@@ -218,9 +227,9 @@ def getEmbedding(words, size_voc, word_embedding_size):
 def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 	input_shape = embeded_words.get_shape().as_list()
 	assert len(input_shape)==3 
+
 	timesteps = input_shape[1]
 	input_dims = input_shape[2]
-
 	# get initial state
 	initial_state = get_init_state(embeded_words, output_dims)
 
@@ -275,7 +284,7 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 		input_mask = input_mask.unpack(mask)
 
 
-	hidden_state = tf.TensorArray(
+	hidden_state_q = tf.TensorArray(
             dtype=tf.float32,
             size=timesteps,
             tensor_array_name='hidden_state_q')
@@ -286,7 +295,7 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 	# 	hidden_state = hidden_state.unpack(hidden_state)
 
 
-	def step(time, hidden_state, h_tm1):
+	def step(time, hidden_state_q, h_tm1):
 		x_t = input_embeded_words.read(time) # batch_size * dim
 		mask_t = input_mask.read(time)
 
@@ -300,35 +309,40 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 
 		
 		h = (1-z)*hh + z*h_tm1
+		tiled_mask_t = tf.tile(mask_t, tf.stack([1, h.get_shape().as_list()[1]]))
 
-		tiled_mask_t = tf.tile(mask_t, tf.stack([1, tf.shape(h)[1]]))
 		h = tf.where(tiled_mask_t, h, h_tm1)
+		
+		hidden_state_q = hidden_state_q.write(time, h)
 
-		hidden_state.write(time, h)
-
-		return (time+1,hidden_state,h)
+		return (time+1,hidden_state_q,h)
 
 	
 
 
-	time = tf.constant(0, dtype='int32', name='time_q')
+	time = tf.constant(0, dtype='int32', name='time')
 
 
 	ret_out = tf.while_loop(
             cond=lambda time, *_: time < timesteps,
             body=step,
-            loop_vars=(time, hidden_state, initial_state),
+            loop_vars=(time, hidden_state_q, initial_state),
             parallel_iterations=32,
             swap_memory=True)
 
-	output = ret_out[1]
-	last_output = ret_out[-1] 
 
-	if hasattr(hidden_state, 'stack'):
-		hidden_state = hidden_state.stack()
+	hidden_state_q = ret_out[1]
+	last_output = ret_out[-1] 
+	
+	if hasattr(hidden_state_q, 'stack'):
+		outputs = hidden_state_q.stack()
+		print('stack')
+	else:
+		outputs = hidden_state_q.pack()
 
 	axis = [1,0] + list(range(2,3))
-	output = tf.transpose(hidden_state,perm=axis)
+	outputs = tf.transpose(outputs,perm=axis)
+
 
 	#linear classification
 	W_c = init_weight_variable((output_dims,num_class),name="W_c_q")
@@ -337,7 +351,7 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 	# scores = tf.nn.softmax(tf.matmul(last_output,W_c)+b_c)
 
 	scores = tf.matmul(last_output,W_c)+b_c
-	return scores
+	return scores,outputs
 
 if __name__=='__main__':
 	# timesteps=10
@@ -383,7 +397,8 @@ if __name__=='__main__':
 	y = tf.placeholder(tf.float32,shape=(None, num_class))
 
 	embeded_words, mask = getEmbedding(input_question, size_voc, word_embedding_size)
-	embeded_question = getQuestionEncoder(embeded_words, question_embedding_size, mask, num_class)
+	embeded_question,outputs = getQuestionEncoder(embeded_words, question_embedding_size, mask, num_class)
+
 	# sess.run(init)
 	# train module
 	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
@@ -400,10 +415,11 @@ if __name__=='__main__':
 			data_x = np.random.randint(0,10,size=(2,timesteps),dtype='int32')
 			data_y = np.zeros((2,num_class))
 			data_y[:,1]=1
-			_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
+			_, l, output_embed,mask_p,outpus_p = sess.run([train,loss,embeded_words,mask,outputs],feed_dict={input_question:data_x,y:data_y})
 			print(l)
 			print(data_x)
 			print(mask_p)
+			
 
 
 	
@@ -411,52 +427,5 @@ if __name__=='__main__':
 
 	
 
-	# node1 = tf.constant(3.0, tf.float32)
-	# node2 = tf.constant(4.0, tf.float32)
-
-	# print(node1,node2)
-
-	# sess = tf.Session()
-	# print(sess.run([node1,node2]))
-
-	# node3 = tf.add(node1,node2)
-	# print("node3:", node3)
-	# print("sess.run(node3):" , sess.run(node3))
-
-
-	# a = tf.placeholder(tf.float32)
-	# b = tf.placeholder(tf.float32)
-	# adder_node = a + b
-
-	# print(sess.run(adder_node,{a:3, b:4.5}))
-
-	# print(sess.run(adder_node, {a:[1,3],b:[2,4]}))
-
-	# W = tf.Variable([.3], tf.float32)
-	# b = tf.Variable([-.3], tf.float32)
-
-	# x  = tf.placeholder(tf.float32)
-	# linear_model = W*x +b
-	# # initialize all the variable in a TensorFlwo program
-	# init = tf.global_variables_initializer()
-	# sess.run(init)
-
-	# print(sess.run(linear_model,{x:[1,2,3,4]}))
-
-	# # the loss module
-	# y = tf.placeholder(tf.float32)
-	# squared_deltas = tf.square(linear_model - y)
-	# loss = tf.reduce_sum(squared_deltas)
-	# print(sess.run(loss,{x:[1,2,3,4],y:[0,-1,-2,-3]}))
-
-	# # train module
-
-	# optimizer = tf.train.GradientDescentOptimizer(0.01)
-	# train = optimizer.minimize(loss)
-
-	# sess.run(init)
-	# for i in range(1000):
-	# 	sess.run(train,{x:[1,2,3,4],y:[0,-1,-2,-3]})
-	# print(sess.run([W,b]))
 
 

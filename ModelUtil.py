@@ -210,7 +210,9 @@ def getVideoEncoder(x, output_dims, num_class):
 '''
 def getEmbedding(words, size_voc, word_embedding_size):
 	# words = list(words)
-	W_e = init_weight_variable((size_voc,word_embedding_size),init_method='uniform',name='W_e')
+	# W_e = init_weight_variable((size_voc,word_embedding_size),init_method='uniform',name='W_e') # not share the variable
+
+	W_e = tf.get_variable('W_e',(size_voc,word_embedding_size),initializer=tf.random_uniform_initializer(-0.05,0.05)) # share the embedding matrix
 	embeded_words = tf.gather(W_e, words)
 	mask =  tf.not_equal(words,0)
 	return embeded_words, mask 
@@ -353,7 +355,223 @@ def getQuestionEncoder(embeded_words, output_dims, mask, num_class):
 	scores = tf.matmul(last_output,W_c)+b_c
 	return scores,outputs
 
+
+
+'''
+	function: getAnswerEmbedding
+		parameters:
+			words: int, word index ; or a np.int32 list ## sample(null) * numebrOfChoice * timesteps
+			size_voc: size of vocabulary
+			embedding_size: the dimension after embedding
+'''
+def getAnswerEmbedding(words, size_voc, word_embedding_size):
+	assert len(words.get_shape().as_list())==3 #
+	input_shape = words.get_shape().as_list()
+	numberOfChoices = input_shape[1]
+	timesteps = input_shape[2]
+
+	mask =  tf.not_equal(words,0)
+
+	words = tf.reshape(words, (-1,timesteps))
+	W_e = tf.get_variable('W_e',(size_voc,word_embedding_size),initializer=tf.random_uniform_initializer(-0.05,0.05)) # share the embedding matrix
+	embeded_words = tf.gather(W_e, words)
+	
+
+	embeded_words = tf.reshape(embeded_words,(-1,numberOfChoices,timesteps,word_embedding_size))
+	
+	return embeded_words, mask 
+
+
+'''
+	function: getAnswerEncoder
+	parameters:
+		embeded_words: samples * numberOfChoices * timesteps  * dim
+		output_dim: output of GRU, the dimension of answering vector
+		mask : bool type, mask the embeded_words
+		num_class: number of classifier
+'''
+def getAnswerEncoder(embeded_words, output_dims, mask, num_class):
+	input_shape = embeded_words.get_shape().as_list()
+	assert len(input_shape)==4 
+
+
+	numberOfChoices = input_shape[1]
+	timesteps = input_shape[2]
+	input_dims = input_shape[3]
+
+
+	# batch_size x numberOfChoices x timesteps x dim 
+	axis = [2,0,1]+list(range(3,4))  # axis = [2,0,1,3]
+	embeded_words = tf.transpose(embeded_words, perm=axis) # permutate the 'embeded_words' --> timesteps x batch_size x numberOfChoices x dim
+	embeded_words = tf.reshape(embeded_words,(timesteps,-1,input_dims)) # reshape the 'embeded_words' --> timesteps x (batch x numberOfChoices) x dim
+
+
+	# get initial state
+	initial_state = get_init_state(embeded_words, output_dims)
+
+	# initialize the parameters
+	# W_r,U_r,b_r; W_z, U_z, b_z; W_h, U_h, b_h
+	W_r = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_a_r")
+	W_z = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_a_z")
+	W_h = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_a_h")
+
+	U_r = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_a_r")
+	U_z = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_a_z")
+	U_h = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_a_h")
+
+	b_r = init_bias_variable((output_dims,),name="b_a_r")
+	b_z = init_bias_variable((output_dims,),name="b_a_z")
+	b_h = init_bias_variable((output_dims,),name="b_a_h")
+
+
+
+
+	
+
+
+
+	input_embeded_words = tf.TensorArray(
+            dtype=embeded_words.dtype,
+            size=timesteps,
+            tensor_array_name='input_embeded_words_a')
+
+
+	if hasattr(input_embeded_words, 'unstack'):
+		input_embeded_words = input_embeded_words.unstack(embeded_words)
+	else:
+		input_embeded_words = input_embeded_words.unpack(embeded_words)	
+
+
+	# preprocess mask
+	if len(mask.get_shape()) == len(input_shape)-1:
+		mask = tf.expand_dims(mask,dim=-1)
+	
+	mask = tf.transpose(mask,perm=axis)
+	mask = tf.reshape(mask, (timesteps,-1,1))
+
+	input_mask = tf.TensorArray(
+		dtype=mask.dtype,
+		size=timesteps,
+		tensor_array_name='input_mask_q'
+		)
+
+	if hasattr(input_mask, 'unstack'):
+		input_mask = input_mask.unstack(mask)
+	else:
+		input_mask = input_mask.unpack(mask)
+
+
+	hidden_state_q = tf.TensorArray(
+            dtype=tf.float32,
+            size=timesteps,
+            tensor_array_name='hidden_state_a')
+
+	# if hasattr(hidden_state, 'unstack'):
+	# 	hidden_state = hidden_state.unstack(hidden_state)
+	# else:
+	# 	hidden_state = hidden_state.unpack(hidden_state)
+
+
+	def step(time, hidden_state_q, h_tm1):
+		x_t = input_embeded_words.read(time) # batch_size * dim
+		mask_t = input_mask.read(time)
+
+		preprocess_x_r = matmul_wx(x_t, W_r, b_r, output_dims)
+		preprocess_x_z = matmul_wx(x_t, W_z, b_z, output_dims)
+		preprocess_x_h = matmul_wx(x_t, W_h, b_h, output_dims)
+
+		r = tf.nn.sigmoid(preprocess_x_r+ matmul_uh(U_r,h_tm1))
+		z = tf.nn.sigmoid(preprocess_x_z+ matmul_uh(U_z,h_tm1))
+		hh = tf.nn.tanh(preprocess_x_h+ matmul_uh(U_h,h_tm1))
+
+		
+		h = (1-z)*hh + z*h_tm1
+		tiled_mask_t = tf.tile(mask_t, tf.stack([1, h.get_shape().as_list()[1]]))
+
+		h = tf.where(tiled_mask_t, h, h_tm1)
+		
+		hidden_state_q = hidden_state_q.write(time, h)
+
+		return (time+1,hidden_state_q,h)
+
+	
+
+
+	time = tf.constant(0, dtype='int32', name='time')
+
+
+	ret_out = tf.while_loop(
+            cond=lambda time, *_: time < timesteps,
+            body=step,
+            loop_vars=(time, hidden_state_q, initial_state),
+            parallel_iterations=32,
+            swap_memory=True)
+
+
+	hidden_state_q = ret_out[1]
+	last_output = ret_out[-1] 
+	
+	if hasattr(hidden_state_q, 'stack'):
+		outputs = hidden_state_q.stack()
+		print('stack')
+	else:
+		outputs = hidden_state_q.pack()
+
+	axis = [1,0] + list(range(2,3))
+	outputs = tf.transpose(outputs,perm=axis)
+	# outputs = tf.reshape(outputs, (-1,numberOfChoices,timesteps,output_dims)) # reshape the output ( batch_size, )
+
+
+	#linear classification
+	W_c = init_weight_variable((output_dims,num_class),name="W_c_a")
+	b_c = init_bias_variable((num_class,),name="b_r_a")
+	# call softmax function
+	# scores = tf.nn.softmax(tf.matmul(last_output,W_c)+b_c)
+
+	scores = tf.matmul(last_output,W_c)+b_c
+
+	# scores = tf.reshape(scores,(-1,numberOfChoices,num_class)) 
+	scores = tf.reshape(scores,(-1,numberOfChoices)) # num_class == 1 
+	return scores
+
+'''
+	function: getLoss
+	parameters:
+		visual_feature: batch_size * visual_encoded_dim
+		question_feature: batch_size * question_encoded_dim
+		answer_feature: batch_zize * numberOfChoices * answer_encoded_dim
+		common_space_dim: embedding the visual,question,answer to the common space
+
+		answer_index: the ground truth index, one hot vector
+	return:
+		loss: tf.float32
+'''
+def getMultiModelTrainLoss(visual_feature, question_feature, answer_feature, common_space_dim, answer_index):
+	visual_shape = visual_feature.get_shape().as_list()
+	question_shape = question_feature.get_shape().as_list()
+	answer_shape = answer_feature.get_shape().as_list()
+
+	# build the transformed matrix
+	W_v = tf.get_variable('W_v',(visual_shape[1],common_space_dim),initializer=tf.random_uniform_initializer(-0.05,0.05))
+	W_q = tf.get_variable('W_q',(question_shape[1],common_space_dim),initializer=tf.random_uniform_initializer(-0.05,0.05))
+	W_a = tf.get_variable('W_a',(answer_shape[2],common_space_dim),initializer=tf.random_uniform_initializer(-0.05,0.05))
+
+	answer_feature = tf.reshape(answer_feature,(-1,answer_shape[2]))
+
+	# encoder the features into common space
+	T_v = tf.matmul(visual_feature,W_v)
+	T_q = tf.matmul(question_feature,W_q)
+	T_a = tf.matmul(answer_feature,W_a)
+
+	T_a = tf.reshape(T_a,(-1,answer_shape[1],answer_shape[2]))
+	# compute the loss
+	(T_v+T_q)*T_a[:,] - 
+
+
 if __name__=='__main__':
+	'''
+		for video encoding
+	'''
 	# timesteps=10
 	# input_dims=100
 	# output_dims=100
@@ -383,43 +601,88 @@ if __name__=='__main__':
 	# 		print(l)
 
 	# print('done..')
+	'''
+		for question encoding
+	'''
+	# print('test question encording ...')
 
-	print('test question emcording ...')
+	# size_voc = 10
+	# timesteps=10
+	# word_embedding_size = 10
+	# words = [1,2,3,4,5]
+	# num_class = 101
+	# question_embedding_size = 100
+	# with tf.variable_scope('share_embedding_matrix') as scope:
+	# 	input_question = tf.placeholder(tf.int32, shape=(None,timesteps), name='input_question')
+	# 	y = tf.placeholder(tf.float32,shape=(None, num_class))
+	# 	# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
+	# 	# scope.reuse_variables() # notice this line for share the variable
+	# 	embeded_words, mask = getEmbedding(input_question, size_voc, word_embedding_size)
+	# 	embeded_question,outputs = getQuestionEncoder(embeded_words, question_embedding_size, mask, num_class)
+
+	# 	# sess.run(init)
+	# 	# train module
+	# 	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
+	# 	acc_value = tf.metrics.accuracy(y, embeded_question)
+	# 	optimizer = tf.train.GradientDescentOptimizer(0.01)
+	# 	train = optimizer.minimize(loss)
+
+	# # runtime environment 
+	# init = tf.global_variables_initializer()
+	# sess = tf.Session()
+	# sess.run(init)
+	# with sess.as_default():
+
+	# 	for i in range(1):
+	# 		data_x = np.random.randint(0,10,size=(2,timesteps),dtype='int32')
+	# 		data_y = np.zeros((2,num_class))
+	# 		data_y[:,1]=1
+	# 		_, l, output_embed,mask_p,outpus_p = sess.run([train,loss,embeded_words,mask,outputs],feed_dict={input_question:data_x,y:data_y})
+	# 		print(l)
+	# 		print(data_x)
+	# 		print(mask_p)
+
+	'''
+		for answering encoding
+	'''
+	print('test answer encording ...')
 
 	size_voc = 10
 	timesteps=10
 	word_embedding_size = 10
 	words = [1,2,3,4,5]
-	num_class = 101
+	num_class = 5
+	numberOfChoices = 5
 	question_embedding_size = 100
 
-	input_question = tf.placeholder(tf.int32, shape=(None,timesteps), name='input_question')
-	y = tf.placeholder(tf.float32,shape=(None, num_class))
-
-	embeded_words, mask = getEmbedding(input_question, size_voc, word_embedding_size)
-	embeded_question,outputs = getQuestionEncoder(embeded_words, question_embedding_size, mask, num_class)
-
-	# sess.run(init)
-	# train module
-	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
-	acc_value = tf.metrics.accuracy(y, embeded_question)
-	optimizer = tf.train.GradientDescentOptimizer(0.01)
-	train = optimizer.minimize(loss)
+	with tf.variable_scope('share_embedding_matrix') as scope:
+		input_question = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps), name='input_answer')
+		y = tf.placeholder(tf.float32,shape=(None, num_class))
+		# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
+		# scope.reuse_variables() # notice this line for share the variable
+		embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
+		embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
+		# sess.run(init)
+		# train module
+		loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
+		acc_value = tf.metrics.accuracy(y, embeded_question)
+		optimizer = tf.train.GradientDescentOptimizer(0.01)
+		train = optimizer.minimize(loss)
 
 	# runtime environment 
 	init = tf.global_variables_initializer()
 	sess = tf.Session()
 	sess.run(init)
 	with sess.as_default():
+
 		for i in range(1):
-			data_x = np.random.randint(0,10,size=(2,timesteps),dtype='int32')
+			data_x = np.random.randint(0,10,size=(2,numberOfChoices, timesteps),dtype='int32')
 			data_y = np.zeros((2,num_class))
 			data_y[:,1]=1
-			_, l, output_embed,mask_p,outpus_p = sess.run([train,loss,embeded_words,mask,outputs],feed_dict={input_question:data_x,y:data_y})
+			_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
 			print(l)
 			print(data_x)
 			print(mask_p)
-			
 
 
 	

@@ -8,8 +8,8 @@ import numpy as np
 
 import ModelUtil
 
-def main():
 
+def build_model():
 	size_voc = 10
 
 	video_feature_dims=100
@@ -51,6 +51,24 @@ def main():
 		# acc_value = tf.metrics.accuracy(y, embeded_question)
 		optimizer = tf.train.GradientDescentOptimizer(0.01)
 		train = optimizer.minimize(loss)
+	return train
+def main():
+
+	size_voc = 10
+
+	video_feature_dims=100
+	timesteps_v=10 # sequences length for video
+	timesteps_q=11 # sequences length for question
+	timesteps_a=12 # sequences length for anwser
+	numberOfChoices = 2 # for input choices, one for correct, one for wrong answer
+
+	word_embedding_size = 10
+	sentence_embedding_size = 20
+	visual_embedding_dims=25
+
+	common_space_dim = 30
+	
+	train = build_model()
 
 	# runtime environment 
 	init = tf.global_variables_initializer()

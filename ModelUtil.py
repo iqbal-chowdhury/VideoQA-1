@@ -535,18 +535,16 @@ def getAnswerEncoder(embeded_words, output_dims, mask, num_class):
 	return scores
 
 '''
-	function: getLoss
+	fucntion: getMultiModel
 	parameters:
 		visual_feature: batch_size * visual_encoded_dim
 		question_feature: batch_size * question_encoded_dim
 		answer_feature: batch_zize * numberOfChoices * answer_encoded_dim
 		common_space_dim: embedding the visual,question,answer to the common space
-
-		answer_index: the ground truth index, one hot vector
-	return:
-		loss: tf.float32
+	return: the embeded vectors(v,q,a)
 '''
-def getMultiModelTrainLoss(visual_feature, question_feature, answer_feature, common_space_dim, answer_index):
+
+def getMultiModel(visual_feature, question_feature, answer_feature, common_space_dim):
 	visual_shape = visual_feature.get_shape().as_list()
 	question_shape = question_feature.get_shape().as_list()
 	answer_shape = answer_feature.get_shape().as_list()
@@ -563,13 +561,36 @@ def getMultiModelTrainLoss(visual_feature, question_feature, answer_feature, com
 	T_q = tf.matmul(question_feature,W_q)
 	T_a = tf.matmul(answer_feature,W_a)
 
-	T_a = tf.reshape(T_a,(-1,answer_shape[1],answer_shape[2]))
+	T_a = tf.reshape(T_a,(-1,answer_shape[1],common_space_dim))
+
+	return T_v,T_q,T_a
+'''
+	function: getRankingLoss
+	parameters:
+		answer_index: the ground truth index, one hot vector
+	return:
+		loss: tf.float32
+'''
+def getRankingLoss(T_v, T_q, T_a, answer_index):
+	
+	# answer_index = tf.expand_dims(answer_index,dim=-1)
+	# tf.tile(answer_index)
 	# compute the loss
-	(T_v+T_q)*T_a[:,] - 
+	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,common_space_dim])
+	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
+	error_answer =  tf.reduce_sum(T_a*(1-answer_index),reduction_indices=1)
+
+	alpha = 0.2 
+	gt = tf.reduce_sum((T_v+T_q)*right_answer,reduction_indices=-1)
+	ft = tf.reduce_sum((T_v+T_q)*error_answer,reduction_indices=-1)
+	loss = alpha - gt + ft
+	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
+	loss = tf.maximum(0.,loss)
+	return loss
 
 
 if __name__=='__main__':
-	'''
+	''' 
 		for video encoding
 	'''
 	# timesteps=10
@@ -645,6 +666,48 @@ if __name__=='__main__':
 	'''
 		for answering encoding
 	'''
+	# print('test answer encording ...')
+
+	# size_voc = 10
+	# timesteps=10
+	# word_embedding_size = 10
+	# words = [1,2,3,4,5]
+	# num_class = 5
+	# numberOfChoices = 5
+	# question_embedding_size = 100
+
+	# with tf.variable_scope('share_embedding_matrix') as scope:
+	# 	input_question = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps), name='input_answer')
+	# 	y = tf.placeholder(tf.float32,shape=(None, num_class))
+	# 	# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
+	# 	# scope.reuse_variables() # notice this line for share the variable
+	# 	embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
+	# 	embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
+	# 	# sess.run(init)
+	# 	# train module
+	# 	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
+	# 	acc_value = tf.metrics.accuracy(y, embeded_question)
+	# 	optimizer = tf.train.GradientDescentOptimizer(0.01)
+	# 	train = optimizer.minimize(loss)
+
+	# # runtime environment 
+	# init = tf.global_variables_initializer()
+	# sess = tf.Session()
+	# sess.run(init)
+	# with sess.as_default():
+
+	# 	for i in range(1):
+	# 		data_x = np.random.randint(0,10,size=(2,numberOfChoices, timesteps),dtype='int32')
+	# 		data_y = np.zeros((2,num_class))
+	# 		data_y[:,1]=1
+	# 		_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
+	# 		print(l)
+	# 		print(data_x)
+	# 		print(mask_p)
+
+	'''
+		for testing loss
+	'''
 	print('test answer encording ...')
 
 	size_voc = 10
@@ -653,19 +716,24 @@ if __name__=='__main__':
 	words = [1,2,3,4,5]
 	num_class = 5
 	numberOfChoices = 5
-	question_embedding_size = 100
-
+	embedding_size = 100
+	common_space_dim = 200
 	with tf.variable_scope('share_embedding_matrix') as scope:
-		input_question = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps), name='input_answer')
+		visual_feature = tf.placeholder(tf.float32, shape=(None,embedding_size), name='visual_feature')
+		question_feature = tf.placeholder(tf.float32, shape=(None,embedding_size), name='question_feature')
+		answer_feature = tf.placeholder(tf.float32, shape=(None,numberOfChoices,embedding_size), name='answer_feature')
 		y = tf.placeholder(tf.float32,shape=(None, num_class))
 		# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
 		# scope.reuse_variables() # notice this line for share the variable
-		embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
-		embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
+		T_v, T_q, T_a = getMultiModel(visual_feature, question_feature, answer_feature, common_space_dim)
+
+		loss = getRankingLoss(T_v, T_q, T_a, y)
+		# embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
+		# embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
 		# sess.run(init)
 		# train module
-		loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
-		acc_value = tf.metrics.accuracy(y, embeded_question)
+		loss = tf.reduce_mean(loss)
+		# acc_value = tf.metrics.accuracy(y, embeded_question)
 		optimizer = tf.train.GradientDescentOptimizer(0.01)
 		train = optimizer.minimize(loss)
 
@@ -675,14 +743,16 @@ if __name__=='__main__':
 	sess.run(init)
 	with sess.as_default():
 
-		for i in range(1):
-			data_x = np.random.randint(0,10,size=(2,numberOfChoices, timesteps),dtype='int32')
-			data_y = np.zeros((2,num_class))
-			data_y[:,1]=1
-			_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
+		for i in range(100):
+			data_v = np.random.random((2,embedding_size))
+			data_q = np.random.random((2,embedding_size))
+			data_a = np.random.random((2,numberOfChoices, embedding_size))
+
+			data_y = np.zeros((2,numberOfChoices),dtype='float32')
+			data_y[:,1]=1.0
+			_, l = sess.run([train,loss],feed_dict={visual_feature:data_v, question_feature:data_q, answer_feature:data_a, y:data_y})
 			print(l)
-			print(data_x)
-			print(mask_p)
+
 
 
 	

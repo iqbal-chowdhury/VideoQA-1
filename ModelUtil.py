@@ -593,22 +593,84 @@ def getRankingLoss(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
 	T_q_shape = T_q.get_shape().as_list()
 	T_a_shape = T_a.get_shape().as_list()
 
+	numOfChoices = T_a_shape[1]
+	common_space_dim = T_a_shape[2]
+
 	assert T_q_shape == T_v_shape
 
+	T_v = tf.nn.l2_normalize(T_v,1)
+	T_q = tf.nn.l2_normalize(T_q,1)
+	T_a = tf.nn.l2_normalize(T_a,2)
+
+	T_p = tf.nn.l2_normalize(T_v+T_q,1)
+
 	
 
-	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
-	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
-	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
-
+	# answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
 	
-	T_p = T_v+T_q 
-	gt = tf.reduce_sum(T_p*right_answer,reduction_indices=-1)
-	ft = tf.reduce_sum(T_p*error_answer,reduction_indices=-1)
-	loss = alpha - gt + ft
-	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
+
+	T_p = tf.tile(tf.expand_dims(T_p,dim=1),[1,numOfChoices,1])
+
+	# T_p = tf.nn.l2_normalize(T_p*T_a,2)
+	T_p = T_p*T_a
+	T_p = tf.reduce_sum(T_p, reduction_indices=-1)
+
+	scores = T_p
+
+	positive = tf.reduce_sum(T_p*answer_index, reduction_indices=1, keep_dims=True) # sample , get the positive score
+	positive = tf.tile(positive,[1,numOfChoices])
+
+	loss = (alpha - positive + T_p)*(1-answer_index)
+
 	loss = tf.maximum(0.,loss)
-	return loss
+
+	loss = tf.reduce_sum(loss,reduction_indices=-1)
+
+	return loss,scores
+
+# def getRankingLoss_back(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
+	
+# 	# answer_index = tf.expand_dims(answer_index,dim=-1)
+# 	# tf.tile(answer_index)
+# 	# compute the loss
+	
+# 	T_v_shape = T_v.get_shape().as_list()
+# 	T_q_shape = T_q.get_shape().as_list()
+# 	T_a_shape = T_a.get_shape().as_list()
+
+# 	assert T_q_shape == T_v_shape
+
+# 	T_a = tf.nn.l2_normalize(T_a,2)
+# 	T_v = tf.nn.l2_normalize(T_v,1)
+# 	T_q = tf.nn.l2_normalize(T_q,1)
+
+
+# 	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
+
+
+# 	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
+# 	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
+
+	
+
+
+# 	T_p = T_v+T_q 
+
+# 	# --- normalization ---
+
+# 	T_p = tf.nn.l2_normalize(T_p,1)
+# 	right_answer = tf.nn.l2_normalize(right_answer,1)
+# 	error_answer = tf.nn.l2_normalize(error_answer,1)
+
+
+	
+	
+# 	gt = tf.reduce_sum(T_p*right_answer,reduction_indices=-1)
+# 	ft = tf.reduce_sum(T_p*error_answer,reduction_indices=-1)
+# 	loss = alpha - gt + ft
+# 	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
+# 	loss = tf.maximum(0.,loss)
+# 	return loss
 
 '''
 	function: getTripletLoss
@@ -636,6 +698,9 @@ def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
 
 	
+	T_v = tf.nn.l2_normalize(T_v,1)
+	T_q = tf.nn.l2_normalize(T_q,1)
+
 	T_p = T_v+T_q 
 
 	# --- normalization ---
@@ -650,6 +715,8 @@ def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
 	loss = tf.maximum(0.,loss)
 	return loss
+
+
 if __name__=='__main__':
 	''' 
 		for video encoding
@@ -767,7 +834,7 @@ if __name__=='__main__':
 	# 		print(mask_p)
 
 	'''
-		for testing loss
+		for training loss
 	'''
 	print('test answer encording ...')
 
@@ -788,7 +855,7 @@ if __name__=='__main__':
 		# scope.reuse_variables() # notice this line for share the variable
 		T_v, T_q, T_a = getMultiModel(visual_feature, question_feature, answer_feature, common_space_dim)
 
-		# loss = getRankingLoss(T_v, T_q, T_a, y)
+		# loss, scores = getRankingLoss(T_v, T_q, T_a, y)
 		loss = getTripletLoss(T_v, T_q, T_a, y)
 
 		# embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)

@@ -81,10 +81,11 @@ def create_vocabulary(QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1}):
 	return QA_words, v2i
 
 
-def S2I(sentence, v2i, fixed_len):
+def S2I(sen, v2i, fixed_len):
 	'''
 		len_qa: fixed length of question or answer
 	'''
+	sentence = preprocess_sentence(sen.lower()).split(' ')
 	res = []
 	for idx, w in enumerate(sentence):
 		if idx<fixed_len:
@@ -97,7 +98,7 @@ def S2I(sentence, v2i, fixed_len):
 	return res
 
 
-def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
+def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2, phase='train'):
 	'''
 		batch_qas_list: list of qas
 		QA_words: all the QAs, contains question words and answer words
@@ -110,7 +111,6 @@ def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices
 			both of them are numeric indexed
 			ground_truth is one hot vector
 	'''
-	assert numOfChoices==2
 
 	batch_size = len(batch_qas_list)
 	questions = np.zeros((batch_size,nql),dtype='int32')
@@ -120,23 +120,36 @@ def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices
 	for idx, qa in enumerate(batch_qas_list):
 		# set question 
 		qid = qa.qid
-		questions[idx][:]=S2I(QA_words[qid]['q_w'], v2i,nql)
-		# set anwsers
-		ground_answer_pos = np.random.randint(0,numOfChoices)
-		ground_truth[idx][ground_answer_pos]=1
+		questions[idx][:]=S2I(qa.question, v2i,nql)
 		
-		# set correct answer
-		correct_index = int(QA_words[qid]['correct_index'])
-		answers[idx][ground_answer_pos][:] = S2I(QA_words[qid]['a_w'][correct_index], v2i, nqa)
+		
+		# set anwsers
+		if numOfChoices==2:
+			ground_answer_pos = np.random.randint(0,numOfChoices)
+			ground_truth[idx][ground_answer_pos]=1
+			
+			# set correct answer
+			correct_index = int(qa.correct_index)
+			answers[idx][ground_answer_pos][:] = S2I(qa.answers[correct_index], v2i, nqa)
 
 
-		wrong_index = np.random.randint(0,5)
-		while(wrong_index==correct_index):
+
 			wrong_index = np.random.randint(0,5)
+			while(wrong_index==correct_index):
+				wrong_index = np.random.randint(0,5)
 
-		# set correct answer
-		# if numOfChoices != 2 , the following code is wrong 
-		answers[idx][1-ground_answer_pos][:]=S2I(QA_words[qid]['a_w'][wrong_index], v2i, nqa)
+			# set wrong answer
+			answers[idx][1-ground_answer_pos][:]=S2I(qa.answers[wrong_index], v2i, nqa)
+		elif numOfChoices==5:
+			
+			# set correct answer
+			correct_index = int(qa.correct_index)
+			ground_truth[idx][correct_index]=1
+			for ans_idx, ans in enumerate(qa.answers):
+				answers[idx][ans_idx][:]=S2I(ans, v2i, nqa)
+
+		else:
+			raise ValueError('Invalid numOfChoices: ' + numOfChoices)
 
 	return questions,answers,ground_truth
 
@@ -153,8 +166,8 @@ def getBatchVideoFeature(batch_qas_list, QA_words, hf, feature_shape):
 
 	for idx, qa in enumerate(batch_qas_list):
 		qid = qa.qid
-		video_clips = QA_words[qid]['video_clips']
-		imdb_key = QA_words[qid]['imdb_key']
+		video_clips = qa.video_clips
+		imdb_key = qa.imdb_key
 		clips_features = []
 		if len(video_clips) != 0:
 			for clip in video_clips:

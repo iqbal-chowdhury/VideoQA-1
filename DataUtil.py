@@ -97,35 +97,38 @@ def S2I(sentence, v2i, fixed_len):
 	return res
 
 
-def getBatchIndexedQAs(batch_qid_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
+def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
 	'''
-		batch_qid_list: list of qid
+		batch_qas_list: list of qas
 		QA_words: all the QAs, contains question words and answer words
 		v2i: vocabulary to index
 		nql: length of question
 		nqa: length of answer
 		numOfChoices: number of Choices utilized per QA, default set to 2 ==> right/wrong
 
-		return: questions, answers
+		return: questions, answers, ground_truth
 			both of them are numeric indexed
+			ground_truth is one hot vector
 	'''
 	assert numOfChoices==2
 
-	batch_size = len(batch_qid_list)
+	batch_size = len(batch_qas_list)
 	questions = np.zeros((batch_size,nql),dtype='int32')
 	answers = np.zeros((batch_size,numOfChoices,nqa),dtype='int32')
+	ground_truth = np.zeros((batch_size,numOfChoices),dtype='int32')
 
-	for idx, qid in enumerate(batch_qid_list):
+	for idx, qa in enumerate(batch_qas_list):
 		# set question 
-		
+		qid = qa.qid
 		questions[idx][:]=S2I(QA_words[qid]['q_w'], v2i,nql)
 		# set anwsers
 		ground_answer_pos = np.random.randint(0,numOfChoices)
-
+		ground_truth[idx][ground_answer_pos]=1
 		
 		# set correct answer
 		correct_index = int(QA_words[qid]['correct_index'])
 		answers[idx][ground_answer_pos][:] = S2I(QA_words[qid]['a_w'][correct_index], v2i, nqa)
+
 
 		wrong_index = np.random.randint(0,5)
 		while(wrong_index==correct_index):
@@ -135,44 +138,69 @@ def getBatchIndexedQAs(batch_qid_list,QA_words,v2i, nql=16, nqa=10, numOfChoices
 		# if numOfChoices != 2 , the following code is wrong 
 		answers[idx][1-ground_answer_pos][:]=S2I(QA_words[qid]['a_w'][wrong_index], v2i, nqa)
 
-	return questions,answers
+	return questions,answers,ground_truth
 
-def getBatchVideoFeature(batch_qid_list, QA_words, hf, feature_shape):
+def getBatchVideoFeature(batch_qas_list, QA_words, hf, feature_shape):
+	'''
+		video-based QA
+		there are video clips in all QA pairs.  
+	'''
 
-	batch_size = len(batch_qid_list)
+	batch_size = len(batch_qas_list)
 	input_video = np.zeros((batch_size,)+tuple(feature_shape),dtype='float32')
 
 	timesteps = feature_shape[0]
 
-	for idx, qid in enumerate(batch_qid_list):
+	for idx, qa in enumerate(batch_qas_list):
+		qid = qa.qid
 		video_clips = QA_words[qid]['video_clips']
 		imdb_key = QA_words[qid]['imdb_key']
-		feature = []
+		clips_features = []
 		if len(video_clips) != 0:
 			for clip in video_clips:
-				feature.extend(hf['/'+video_clips[0]+'/'+video_clips[0]][:]) # feature.shape
-			print(len(feature))
+				dataset = imdb_key+'/'+clip
+				if imdb_key in hf.keys() and clip in hf[imdb_key].keys():
+					clips_features.extend(hf[dataset][:]) # clips_features.shape
+			# print(idx,qid,len(clips_features))
 
-			interval = int(math.floor((len(feature)-1)/(timesteps-1)))
+			if(len(clips_features)<=0):
+				# if there are not vlid features
+				for clip in hf[imdb_key].keys():
+					dataset = imdb_key+'/'+clip
+					clips_features.extend(hf[dataset][:]) # clips_features.shape
 
-			input_video[idx] = feature[1::interval][0:timesteps]
+			
+			if(len(clips_features)>=timesteps):
+				interval = int(math.floor((len(clips_features)-1)/(timesteps-1)))
+				input_video[idx] = clips_features[0::interval][0:timesteps]
+			else:
+				input_video[idx][:len(clips_features)] = clips_features
+				for last_idx in xrange(len(clips_features),timesteps):
+					input_video[idx][last_idx]=clips_features[-1]
+
 	return input_video
 
 
 def main():
-	mqa = MovieQA.DataLoader()
-	# get 'video-based' QA task training set
-	vl_qa, _ = mqa.get_video_list('train', 'qa_clips')  # key: 'train:<id>', value: list of related clips
-	# vl_qa, _ = mqa.get_video_list('train', 'all_clips') # key:moive vid, value:list of related movid all_clips
 	
-	stories, QAs = mqa.get_story_qa_data('train', 'subtitle')
+	task = 'video-based' # video-based or subtitle-based
+
+	mqa = MovieQA.DataLoader()
+
+
+	# get 'subtitile-based' QA task dataset
+	stories, subtitle_QAs = mqa.get_story_qa_data('train', 'subtitle')
 
 	# Create vocabulary
-	QA_words, v2i = create_vocabulary(QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1})
+	QA_words, v2i = create_vocabulary(subtitle_QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1})
+
+	# get 'video-based' QA task training set
+	vl_qa, video_QAs = mqa.get_video_list('train', 'qa_clips')  # key: 'train:<id>', value: list of related clips
+	# vl_qa, _ = mqa.get_video_list('train', 'all_clips') # key:moive vid, value:list of related movid all_clips
 
 
 	
-	all_video_train_list = vl_qa.keys()
+	all_video_train_list = video_QAs
 
 	batch_size = 20
 	total_train_qa = len(all_video_train_list)
@@ -180,16 +208,17 @@ def main():
 
 	total_epoch = 100
 
-	hf = h5py.File('/home/wb/myfile.hdf5','r')
+	hf = h5py.File('/home/wb/movie_feature.hdf5','r')
 	feature_shape = (10,1024)
 	for epoch in xrange(total_epoch):
 		#shuffle
-		all_video_train_list =  np.random.permutation(all_video_train_list)
+		np.random.shuffle(all_video_train_list)
 		for batch_idx in xrange(num_batch):
 			batch_qa = all_video_train_list[batch_idx*batch_size:min((batch_idx+1)*batch_size,total_train_qa)]
-			questions,answers = getBatchIndexedQAs(batch_qa,QA_words,v2i, nql=16, nqa=10, numOfChoices=2)
+			questions,answers,ground_truth = getBatchIndexedQAs(batch_qa,QA_words,v2i, nql=16, nqa=10, numOfChoices=2)
 			input_video = getBatchVideoFeature(batch_qa, QA_words, hf, feature_shape)
 			print(input_video)
+			print(ground_truth)
 			break
 		break
 

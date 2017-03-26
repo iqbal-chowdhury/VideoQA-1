@@ -637,6 +637,13 @@ def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 
 	
 	T_p = T_v+T_q 
+
+	# --- normalization ---
+
+	T_p = tf.nn.l2_normalize(T_p,1)
+	right_answer = tf.nn.l2_normalize(right_answer,1)
+	error_answer = tf.nn.l2_normalize(error_answer,1)
+
 	positive = tf.reduce_sum(tf.square(T_p-right_answer),reduction_indices=-1)
 	negative = tf.reduce_sum(tf.square(T_p-error_answer),reduction_indices=-1)
 	loss = alpha + positive - negative

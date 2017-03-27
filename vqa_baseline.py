@@ -14,7 +14,133 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import tensorflow as tf
 
 
-def train():
+def build_model(input_video, visual_embedding_dims, 
+			input_question, size_voc, word_embedding_size, sentence_embedding_size,
+			input_answer, common_space_dim,
+			answer_index = None, lr=0.01,
+			isTest=False):
+
+
+	with tf.variable_scope('share_embedding_matrix') as scope:
+		
+
+		embeded_video = ModelUtil.getVideoEncoder(input_video, visual_embedding_dims)
+
+		embeded_question_words, mask_q = ModelUtil.getEmbedding(input_question, size_voc, word_embedding_size)
+		embeded_question = ModelUtil.getQuestionEncoder(embeded_question_words, sentence_embedding_size, mask_q)
+
+		scope.reuse_variables()
+		embeded_answer_words, mask_a = ModelUtil.getAnswerEmbedding(input_answer, size_voc, word_embedding_size)
+		embeded_answer = ModelUtil.getAnswerEncoder(embeded_answer_words, sentence_embedding_size, mask_a)
+
+
+		T_v, T_q, T_a = ModelUtil.getMultiModel(embeded_video, embeded_question, embeded_answer, common_space_dim)
+		
+
+		if not isTest:
+			# loss = ModelUtil.getTripletLoss(T_v, T_q, T_a, y)
+			loss,scores = ModelUtil.getRankingLoss(T_v, T_q, T_a, answer_index=answer_index,isTest=isTest)
+
+
+			
+			# train module
+			loss = tf.reduce_mean(loss)
+			# acc_value = tf.metrics.accuracy(y, embeded_question)
+			optimizer = tf.train.GradientDescentOptimizer(lr)
+			train = optimizer.minimize(loss)
+			return train,loss,scores
+		else:
+			scores = ModelUtil.getRankingLoss(T_v, T_q, T_a, answer_index=answer_index,isTest=isTest)
+			return scores
+
+def test_model(model_file, output_file, hf):
+	mqa = MovieQA.DataLoader()
+	_, test_video_QAs = mqa.get_video_list('test', 'qa_clips')
+	# get 'subtitile-based' QA task dataset
+	stories, subtitle_QAs = mqa.get_story_qa_data('train', 'subtitle')
+
+	# Create vocabulary
+	QA_words, v2i = DataUtil.create_vocabulary(subtitle_QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1})
+
+	'''
+		model parameters
+	'''
+	size_voc = len(v2i)
+
+	video_feature_dims=2048
+	timesteps_v=16 # sequences length for video
+	feature_shape = (timesteps_v,video_feature_dims)
+
+	timesteps_q=16 # sequences length for question
+	timesteps_a=10 # sequences length for anwser
+	numberOfChoices = 5 # for input choices, one for correct, one for wrong answer
+
+	word_embedding_size = 300
+	sentence_embedding_size = 512
+	visual_embedding_dims=512
+
+	common_space_dim = 512
+	
+
+	print('building model ...')
+
+	input_video = tf.placeholder(tf.float32, shape=(None, timesteps_v, video_feature_dims),name='input_video')
+	input_question = tf.placeholder(tf.int32, shape=(None,timesteps_q), name='input_question')
+	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps_a), name='input_answer')
+
+
+	scores = build_model(input_video, visual_embedding_dims, 
+			input_question, size_voc, word_embedding_size, sentence_embedding_size,
+			input_answer, common_space_dim,
+			answer_index=None, lr=0.01,
+			isTest=True)
+	'''
+		configure && runtime environment
+	'''
+	config = tf.ConfigProto()
+	config.gpu_options.per_process_gpu_memory_fraction = 0.3
+	# sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+	config.log_device_placement=False
+
+	sess = tf.Session(config=config)
+
+	init = tf.global_variables_initializer()
+	sess.run(init)
+
+	# load model
+	saver = tf.train.Saver(sharded=True,max_to_keep=5)
+	saver.restore(sess, model_file)
+
+
+	'''
+		parameters
+	'''
+
+	batch_size = 64
+	
+
+	total_test_qa = len(test_video_QAs)
+	num_test_batch = int(round(total_test_qa*1.0/batch_size))
+	with open(output_file,'w') as wf:
+		with sess.as_default():
+			for batch_idx in xrange(num_test_batch):
+
+				batch_qa = test_video_QAs[batch_idx*batch_size:min((batch_idx+1)*batch_size,total_test_qa)]
+
+
+				data_q,data_a = DataUtil.getBatchTestIndexedQAs(batch_qa,QA_words,v2i, nql=16, nqa=10, numOfChoices=numberOfChoices)
+				data_v = DataUtil.getBatchVideoFeature(batch_qa, QA_words, hf, feature_shape)
+
+				s = sess.run([scores],feed_dict={input_video:data_v, input_question:data_q, input_answer:data_a})
+
+				res = np.argmax(s[0],axis=-1)
+				for idx,qa in enumerate(batch_qa):
+					wf.write('%s %d\n' %(qa.qid,res[idx]))
+
+				print('--Valid--, Batch: %d/%d, Batch_size: %d' %(batch_idx+1,num_test_batch,batch_size))
+
+
+def train_model(hf):
 	task = 'video-based' # video-based or subtitle-based
 
 	mqa = MovieQA.DataLoader()
@@ -52,36 +178,18 @@ def train():
 	common_space_dim = 512
 	
 
-	print('test..')
-	with tf.variable_scope('share_embedding_matrix') as scope:
-		input_video = tf.placeholder(tf.float32, shape=(None, timesteps_v, video_feature_dims),name='input_video')
-		input_question = tf.placeholder(tf.int32, shape=(None,timesteps_q), name='input_question')
-		input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps_a), name='input_answer')
+	print('building model ...')
 
-		y = tf.placeholder(tf.float32,shape=(None, numberOfChoices))
+	input_video = tf.placeholder(tf.float32, shape=(None, timesteps_v, video_feature_dims),name='input_video')
+	input_question = tf.placeholder(tf.int32, shape=(None,timesteps_q), name='input_question')
+	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps_a), name='input_answer')
 
-		embeded_video = ModelUtil.getVideoEncoder(input_video, visual_embedding_dims)
+	y = tf.placeholder(tf.float32,shape=(None, numberOfChoices))
 
-		embeded_question_words, mask_q = ModelUtil.getEmbedding(input_question, size_voc, word_embedding_size)
-		embeded_question = ModelUtil.getQuestionEncoder(embeded_question_words, sentence_embedding_size, mask_q)
-
-		scope.reuse_variables()
-		embeded_answer_words, mask_a = ModelUtil.getAnswerEmbedding(input_answer, size_voc, word_embedding_size)
-		embeded_answer = ModelUtil.getAnswerEncoder(embeded_answer_words, sentence_embedding_size, mask_a)
-
-
-		T_v, T_q, T_a = ModelUtil.getMultiModel(embeded_video, embeded_question, embeded_answer, common_space_dim)
-		# loss = ModelUtil.getTripletLoss(T_v, T_q, T_a, y)
-		loss,scores = ModelUtil.getRankingLoss(T_v, T_q, T_a, y)
-
-
-		
-		# train module
-		loss = tf.reduce_mean(loss)
-		# acc_value = tf.metrics.accuracy(y, embeded_question)
-		optimizer = tf.train.GradientDescentOptimizer(0.01)
-		train = optimizer.minimize(loss)
-
+	train,loss,scores = build_model(input_video, visual_embedding_dims, 
+			input_question, size_voc, word_embedding_size, sentence_embedding_size,
+			input_answer, common_space_dim,
+			answer_index=y, lr=0.01)
 
 	'''
 		configure && runtime environment
@@ -108,15 +216,7 @@ def train():
 	num_val_batch = int(round(total_val_qa*1.0/batch_size))
 
 	total_epoch = 100
-	f_type = 'res'
-	if f_type=='res':
-		feature_path = '/home/wb/res_movie_feature.hdf5'
-	else:
-		feature_path = '/home/wb/movie_feature.hdf5'
-	# /home/wb/res_movie_feature.hdf5
 	
-	
-	hf = h5py.File(feature_path,'r')
 
 	export_path = '/home/xyj/usr/local/saved_model/vqa_baseline/rankloss'+'_'+f_type
 	if not os.path.exists(export_path):
@@ -127,7 +227,7 @@ def train():
 
 	with sess.as_default():
 		saver = tf.train.Saver(sharded=True,max_to_keep=total_epoch)
-		# saver.restore(sess, export_path+'/iter113_L1.12049588864_A0.751643375464.ckpt')
+
 		for epoch in xrange(total_epoch):
 			# # shuffle
 			np.random.shuffle(trained_video_QAs)
@@ -166,7 +266,7 @@ def train():
 			#save model
 			save_path = saver.save(sess, export_path+'/'+'E'+str(epoch+1)+'_A'+str(total_correct_num)+'.ckpt')
 			print("Model saved in file: %s" % save_path)
-	
+		
 
 	
 	
@@ -174,4 +274,28 @@ def train():
 
 
 if __name__ == '__main__':
-	train()
+	isTest = False # True for testing, others for training
+	
+	f_type = 'res'
+	if f_type=='res':
+		feature_path = '/home/wb/res_movie_feature.hdf5'
+	else:
+		feature_path = '/home/wb/movie_feature.hdf5'
+	# /home/wb/res_movie_feature.hdf5
+	hf = h5py.File(feature_path,'r')
+
+	if not isTest:
+
+		train_model(hf)
+	else:
+		model_file = '/home/xyj/usr/local/saved_model/vqa_baseline/rankloss_res/E43_A0.277652370203.ckpt'
+		output_file = '/home/xyj/usr/local/predict_result/vqa_baseline/E43_A0.2776.txt'
+		test_model(model_file, output_file, hf)
+
+	
+	
+	
+	
+
+
+	

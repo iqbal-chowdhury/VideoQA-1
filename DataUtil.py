@@ -98,7 +98,7 @@ def S2I(sen, v2i, fixed_len):
 	return res
 
 
-def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2, phase='train'):
+def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
 	'''
 		batch_qas_list: list of qas
 		QA_words: all the QAs, contains question words and answer words
@@ -152,6 +152,36 @@ def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices
 			raise ValueError('Invalid numOfChoices: ' + numOfChoices)
 
 	return questions,answers,ground_truth
+
+def getBatchTestIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
+	'''
+		batch_qas_list: list of qas
+		QA_words: all the QAs, contains question words and answer words
+		v2i: vocabulary to index
+		nql: length of question
+		nqa: length of answer
+		numOfChoices: number of Choices utilized per QA, default set to 2 ==> right/wrong
+
+		return: questions, answers, ground_truth
+			both of them are numeric indexed
+			ground_truth is one hot vector
+	'''
+
+	batch_size = len(batch_qas_list)
+	questions = np.zeros((batch_size,nql),dtype='int32')
+	answers = np.zeros((batch_size,numOfChoices,nqa),dtype='int32')
+
+	for idx, qa in enumerate(batch_qas_list):
+		# set question 
+		qid = qa.qid
+		questions[idx][:]=S2I(qa.question, v2i,nql)
+		
+		# set anwsers
+		for ans_idx, ans in enumerate(qa.answers):
+			answers[idx][ans_idx][:]=S2I(ans, v2i, nqa)
+
+
+	return questions,answers
 
 def getBatchVideoFeature(batch_qas_list, QA_words, hf, feature_shape):
 	'''

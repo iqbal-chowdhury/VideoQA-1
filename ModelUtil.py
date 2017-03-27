@@ -583,7 +583,7 @@ def getMultiModel(visual_feature, question_feature, answer_feature, common_space
 	return:
 		loss: tf.float32
 '''
-def getRankingLoss(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
+def getRankingLoss(T_v, T_q, T_a, answer_index=None,alpha = 0.2 ,isTest=False):
 	
 	# answer_index = tf.expand_dims(answer_index,dim=-1)
 	# tf.tile(answer_index)
@@ -617,16 +617,20 @@ def getRankingLoss(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
 
 	scores = T_p
 
-	positive = tf.reduce_sum(T_p*answer_index, reduction_indices=1, keep_dims=True) # sample , get the positive score
-	positive = tf.tile(positive,[1,numOfChoices])
+	if not isTest:
+		assert answer_index is not None
+		positive = tf.reduce_sum(T_p*answer_index, reduction_indices=1, keep_dims=True) # sample , get the positive score
+		positive = tf.tile(positive,[1,numOfChoices])
 
-	loss = (alpha - positive + T_p)*(1-answer_index)
+		loss = (alpha - positive + T_p)*(1-answer_index)
 
-	loss = tf.maximum(0.,loss)
+		loss = tf.maximum(0.,loss)
 
-	loss = tf.reduce_sum(loss,reduction_indices=-1)
+		loss = tf.reduce_sum(loss,reduction_indices=-1)
 
-	return loss,scores
+		return loss,scores
+	else:
+		return scores
 
 # def getRankingLoss_back(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
 	

@@ -18,6 +18,39 @@ def preprocess_sentence(line):
 	line = re_multispace.sub(' ', line)
 	return line
 
+def normalize_documents(stories, v2i, max_words=40):
+	"""Normalize all stories in the dictionary, get list of words per sentence.
+	"""
+	for movie in stories.keys():
+		for s, sentence in enumerate(stories[movie]):
+			sentence = sentence.lower()
+			sentence = preprocess_sentence(sentence.strip())
+			sentence = sentence.split(' ')[:max_words]
+			stories[movie][s] = sentence
+
+	max_sentences = max([len(story) for story in stories.values()])
+	max_words = max([len(sent) for story in stories.values() for sent in story])
+
+	processed_stories = {}
+	for imdb_key, story in stories.items():
+		processed_stories[imdb_key] = np.zeros((max_sentences,max_words), dtype='int32')
+		for jj, sentence in enumerate(story):
+			for kk, word in enumerate(sentence):
+				if v2i.has_key(word):
+					processed_stories[imdb_key][jj, kk] = v2i[word]
+				else:
+					processed_stories[imdb_key][jj, kk] = v2i['UNK']
+
+	return processed_stories,max_sentences,max_words
+
+def preprocess_stories(stories,max_words=40):
+	for movie in stories.keys():
+		for s, sentence in enumerate(stories[movie]):
+			sentence = sentence.lower()
+			sentence = preprocess_sentence(sentence)
+			sentence = sentence.split(' ')[:max_words]
+			stories[movie][s] = sentence
+	return stories
 
 def create_vocabulary(QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1}):
 	'''
@@ -46,8 +79,8 @@ def create_vocabulary(QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1}):
 	QA_words = {}
 	for QA in QAs:
 		temp = {}
-		q_w = preprocess_sentence(QA.question.lower()).split(' ')
-		a_w = [preprocess_sentence(answer.lower()).split(' ') for answer in QA.answers]
+		q_w = preprocess_sentence(QA.question.strip().lower()).split(' ')
+		a_w = [preprocess_sentence(answer.strip().lower()).split(' ') for answer in QA.answers]
 		temp['q_w'] = q_w
 		temp['a_w'] = a_w
 		temp['qid'] = QA.qid
@@ -80,14 +113,90 @@ def create_vocabulary(QAs, stories, word_thresh=2, v2i={'': 0, 'UNK':1}):
 
 	return QA_words, v2i
 
+def create_vocabulary_word2vec(QAs, stories, word_thresh=2, w2v_vocab=None, v2i={'': 0, 'UNK':1}):
+	'''
+	v2i = {'': 0, 'UNK':1}  # vocabulary to index
+	'''
+	print 'Create vocabulary...'
+
+	if w2v_vocab is not None:
+		print "Adding words based on word2vec"
+	else:	
+		print "Adding all words"
+
+	# Get all story words
+	all_words = [word for story in stories for sent in story for word in sent]
+	print('number of total words: %d' %len(all_words))
+
+
+	for QA in QAs:
+		q_w = preprocess_sentence(QA.question.strip().lower()).split(' ')
+		a_w = [preprocess_sentence(answer.strip().lower()).split(' ') for answer in QA.answers]
+		
+		all_words.extend(q_w)
+		for answer in a_w:
+			all_words.extend(answer)
+
+
+	# threshold vocabulary, at least N instances of every word
+	vocab = Counter(all_words)
+	vocab = [k for k in vocab.keys() if vocab[k] >= word_thresh]
+
+	# create vocabulary index
+	for w in vocab:
+		if w not in v2i.keys():
+			if w2v_vocab is None:
+				# if word2vec is not provided, just dump the word to vocab
+				v2i[w] = len(v2i)
+			elif w2v_vocab is not None and w in w2v_vocab:
+				# check if word in vocab, or else ignore
+				v2i[w] = len(v2i)
+	
+	print('Created a vocabulary of %d words. Threshold removed %.2f %% words'\
+		%(len(v2i), 100*(1. * len(set(all_words))-len(v2i))/len(all_words)))
+
+	return v2i
+
+def data_in_matrix_form(stories, v2i,max_sentences=None,max_words=None):
+    """Make the QA data set compatible for memory networks by
+    converting to matrix format (index into LUT vocabulary).
+    """
+
+    def add_word_or_UNK():
+        if v2i.has_key(word):
+            return v2i[word]
+        else:
+            return v2i['UNK']
+
+    # Encode stories
+    if max_sentences is None:
+    	max_sentences = max([len(story) for story in stories.values()])
+    if max_words is None:
+    	max_words = max([len(sent) for story in stories.values() for sent in story])
+
+    storyM = {}
+    for imdb_key, story in stories.iteritems():
+        storyM[imdb_key] = np.zeros((max_sentences, max_words), dtype='int32')
+        for jj, sentence in enumerate(story):
+            for kk, word in enumerate(sentence):
+                storyM[imdb_key][jj, kk] = add_word_or_UNK()
+
+    print "#stories:", len(storyM)
+    print "storyM shape (movie 1):", storyM.values()[0].shape
+
+    
+    return storyM,max_sentences,max_words
+
+
 
 def S2I(sen, v2i, fixed_len):
 	'''
 		len_qa: fixed length of question or answer
 	'''
-	sentence = preprocess_sentence(sen.lower()).split(' ')
+	if type(sen)!=list:
+		sen = preprocess_sentence(sen.strip().lower()).split(' ')
 	res = []
-	for idx, w in enumerate(sentence):
+	for idx, w in enumerate(sen):
 		if idx<fixed_len:
 			if w in v2i.keys():
 				res.append(v2i[w])
@@ -98,7 +207,7 @@ def S2I(sen, v2i, fixed_len):
 	return res
 
 
-def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
+def getBatchIndexedQAs(batch_qas_list,v2i, nql=16, nqa=10, numOfChoices=2):
 	'''
 		batch_qas_list: list of qas
 		QA_words: all the QAs, contains question words and answer words
@@ -153,10 +262,9 @@ def getBatchIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices
 
 	return questions,answers,ground_truth
 
-def getBatchTestIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfChoices=2):
+def getBatchTestIndexedQAs(batch_qas_list,v2i, nql=16, nqa=10, numOfChoices=2):
 	'''
 		batch_qas_list: list of qas
-		QA_words: all the QAs, contains question words and answer words
 		v2i: vocabulary to index
 		nql: length of question
 		nqa: length of answer
@@ -183,7 +291,7 @@ def getBatchTestIndexedQAs(batch_qas_list,QA_words,v2i, nql=16, nqa=10, numOfCho
 
 	return questions,answers
 
-def getBatchVideoFeature(batch_qas_list, QA_words, hf, feature_shape):
+def getBatchVideoFeature(batch_qas_list, hf, feature_shape):
 	'''
 		video-based QA
 		there are video clips in all QA pairs.  
@@ -222,6 +330,25 @@ def getBatchVideoFeature(batch_qas_list, QA_words, hf, feature_shape):
 					input_video[idx][last_idx]=clips_features[-1]
 
 	return input_video
+
+
+def getBatchIndexedStories(batch_qa_list,stories,v2i,story_shape):
+	batch_size = len(batch_qa_list)
+	input_stories = np.zeros((batch_size,)+story_shape,dtype='int32')
+
+	for idx, qa in enumerate(batch_qa_list):
+		imdb_key = qa.imdb_key
+		interval = int(math.floor((len(stories[imdb_key])-1)/(story_shape[0]-1)))
+
+		if interval != 0:
+			for k in xrange(story_shape[0]):
+				# if(k<story_shape[0]):
+				input_stories[idx][k] = stories[imdb_key][k*interval][:story_shape[1]]
+		else:
+			input_stories[idx][:len(stories[imdb_key])] = stories[imdb_key][:][:story_shape[1]]
+
+	return input_stories
+
 
 
 def main():

@@ -5,7 +5,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import tensorflow as tf
 
 import numpy as np
-
+from sklearn.decomposition import PCA
 
 def get_fans(shape):
 	if len(shape) == 2:
@@ -95,6 +95,10 @@ def get_init_state(x, output_dims):
 		x: batch_size, timesteps , dims
 		output_dims: the output of the GRU dimensions
 		num_class: number of class : ucf-101: 101
+	return:
+		the last GRU state, 
+		or
+		the sequences of the hidden states
 
 '''
 # def getModel(x, timesteps, input_dims, output_dims, num_class):
@@ -187,17 +191,7 @@ def getVideoEncoder(x, output_dims, return_sequences=False):
 	axis = [1,0] + list(range(2,3))
 	outputs = tf.transpose(hidden_state,perm=axis)
 
-	# #linear classification
-	# W_c = init_weight_variable((output_dims,num_class),name="W_c")
-	# b_c = init_bias_variable((num_class,),name="b_r")
-	# # call softmax function
-	# # scores = tf.nn.softmax(tf.matmul(last_output,W_c)+b_c)
 
-	# scores = tf.matmul(last_output,W_c)+b_c
-	# # softmax implementation
-	# # scores = tf.matmul(last_output,W_c)+b_c
-	# # scores -= tf.argmax(scores,axis=-1,)
-	# # scores /= tf.sum(scores,axis=-1)
 	if return_sequences:
 		return outputs
 	else:
@@ -205,10 +199,13 @@ def getVideoEncoder(x, output_dims, return_sequences=False):
 
 '''
 	function: getEmbedding
-		parameters:
-			words: int, word index ; or a np.int32 list ## sample(null) * input_words_sequential
-			size_voc: size of vocabulary
-			embedding_size: the dimension after embedding
+	parameters:
+		words: int, word index ; or a np.int32 list ## sample(null) * input_words_sequential
+		size_voc: size of vocabulary
+		embedding_size: the dimension after embedding
+	return:
+		embeded_words:the embeded words with shape (sample * timesteps * embedding dims)
+		mask: each element in mask vector is 0 or 1,  indicate there is a word or a padding zero
 '''
 def getEmbedding(words, size_voc, word_embedding_size):
 	# words = list(words)
@@ -227,6 +224,10 @@ def getEmbedding(words, size_voc, word_embedding_size):
 		embeded_words: sample*timestep*dim
 		output_dims: the GRU hidden dim
 		mask: bool type , samples * timestep
+	return:
+		the last GRU state, 
+		or
+		the sequences of the hidden states
 '''
 def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False):
 	input_shape = embeded_words.get_shape().as_list()
@@ -349,13 +350,6 @@ def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False)
 	outputs = tf.transpose(outputs,perm=axis)
 
 
-	# #linear classification
-	# W_c = init_weight_variable((output_dims,num_class),name="W_c_q")
-	# b_c = init_bias_variable((num_class,),name="b_r_q")
-	# # call softmax function
-	# # scores = tf.nn.softmax(tf.matmul(last_output,W_c)+b_c)
-
-	# scores = tf.matmul(last_output,W_c)+b_c
 	if return_sequences:
 		return outputs
 	else:
@@ -369,6 +363,8 @@ def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False)
 		words: int, word index ; or a np.int32 list ## sample(null) * numebrOfChoice * timesteps
 		size_voc: size of vocabulary
 		embedding_size: the dimension after embedding
+	return:
+		the embeded answers with shape(batch_size, numberOfChoices, timesteps, word_embedding_size)
 '''
 def getAnswerEmbedding(words, size_voc, word_embedding_size):
 	assert len(words.get_shape().as_list())==3 #
@@ -395,6 +391,10 @@ def getAnswerEmbedding(words, size_voc, word_embedding_size):
 		output_dim: output of GRU, the dimension of answering vector
 		mask : bool type, mask the embeded_words
 		num_class: number of classifier
+	return:
+		the last encoded answers with shape(batch_size, numberOfChoices, output_dims)
+		or
+		the sequences.... with shape(batch_size, numberOfChoices, numberOfChoices, output_dims)
 '''
 def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
 	input_shape = embeded_words.get_shape().as_list()
@@ -525,25 +525,128 @@ def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
 
 	last_output = tf.reshape(last_output,(-1,numberOfChoices,output_dims))
 	
-
-	# outputs = tf.reshape(outputs, (-1,numberOfChoices,timesteps,output_dims)) # reshape the output ( batch_size, )
-
-
-	# #linear classification
-	# W_c = init_weight_variable((output_dims,num_class),name="W_c_a")
-	# b_c = init_bias_variable((num_class,),name="b_r_a")
-	# # call softmax function
-	# # scores = tf.nn.softmax(tf.matmul(last_output,W_c)+b_c)
-
-	# scores = tf.matmul(last_output,W_c)+b_c
-
-	# # scores = tf.reshape(scores,(-1,numberOfChoices,num_class)) 
-	# scores = tf.reshape(scores,(-1,numberOfChoices)) # num_class == 1 
 	if return_sequences:
 		return outputs
 	else:
 		return last_output
 
+
+
+
+def getMemoryNetworks(embeded_stories, embeded_question, mask):
+
+	'''
+		embeded_stories: (batch_size, num_of_sentence, num_of_words, embeded_words_dims)
+		embeded_question:(batch_size, embeded_words_dims)
+		output_dims: the dimension of stories 
+	'''
+	stories_shape = embeded_stories.get_shape().as_list()
+	embeded_question_shape = embeded_question.get_shape().as_list()
+	num_of_sentence = stories_shape[-3]
+	input_dims = stories_shape[-1]
+	output_dims = embeded_question_shape[-1]
+
+	# tiled_mask = tf.tile(tf.expand_dims(mask,dim=-1),[1,1,1,input_dims])
+
+	# embeded_stories = tf.where(tiled_mask,embeded_stories,tf.zeros_like(embeded_stories))
+
+
+	embeded_stories = tf.reduce_sum(embeded_stories,reduction_indices=2) # # (batch_size,num_of_stentce,input_dims),to get sentence level representation
+	embeded_stories =  tf.nn.l2_normalize(embeded_stories,-1)
+
+	# to do linear transform
+	# W_m = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_m")
+	# embeded_stories = tf.reshape(embeded_stories,(-1,input_dims)) # (batch_size*num_of_stentce,output_dims)
+	# embeded_stories = tf.matmul(embeded_stories,W_m) # (batch_size*num_of_stentce,output_dims)
+
+	# embeded_stories = tf.reshape(embeded_stories,(-1,num_of_sentence,output_dims))
+	# embeded_stories =  tf.nn.l2_normalize(embeded_stories,-1)
+	# ?norm
+	embeded_question =  tf.nn.l2_normalize(embeded_question,-1)
+	
+	embeded_question = tf.tile(tf.expand_dims(embeded_question,dim=1),[1,num_of_sentence,1])
+
+	sen_weight = tf.reduce_sum(embeded_question*embeded_stories,reduction_indices=-1,keep_dims=True)
+	sen_weight = tf.nn.softmax(sen_weight,dim=1)
+	sen_weight = tf.tile(sen_weight,[1,1,output_dims])
+
+	embeded_stories = tf.reduce_sum(embeded_stories*sen_weight,reduction_indices=1) # (batch_size, output_dims)
+
+	return embeded_stories
+
+
+rng = np.random
+rng.seed(1234)
+
+def init_linear_projection(rng, nrows, ncols, pca_mat=None):
+    """ Linear projection (for example when using fixed w2v as LUT """
+    if nrows == ncols:
+        P = np.eye(nrows)
+        print "Linear projection: initialized as identity matrix"
+    else:
+        assert([nrows, ncols] == pca_mat.shape, 'PCA matrix not of same size as RxC')
+        P = 0.1 * pca_mat
+        print "Linear projection: initialized with 0.1 PCA"
+
+    return P.astype('float32')
+
+def setWord2VecModelConfiguration(v2i,w2v,d_w2v,d_lproj):
+	'''
+		v2i: vocab(word) to int(index)
+		w2v: word to vector
+		d_w2v:dimension of w2v
+		d_lproj: dimension of projection
+	'''
+	voc_size = len(v2i)
+	np_mask = np.vstack((np.zeros(d_w2v),np.ones((voc_size-1,d_w2v))))
+	T_mask = tf.constant(np_mask, tf.float32, name='LUT_mask')
+
+	pca_mat = None
+	print "Initialize LUTs as word2vec and use linear projection layer"
+
+
+	LUT = np.zeros((voc_size, d_w2v), dtype='float32')
+	found_words = 0
+
+	for w, v in v2i.iteritems():
+		if w in w2v.vocab:
+			LUT[v] = w2v.get_vector(w)
+			found_words +=1
+		else:
+			LUT[v] = rng.randn(d_w2v)
+			LUT[v] = LUT[v] / (np.linalg.norm(LUT[v]) + 1e-6)
+
+	print "Found %d / %d words" %(found_words, len(v2i))
+
+
+	# word 0 is blanked out, word 1 is 'UNK'
+	LUT[0] = np.zeros((d_w2v))
+
+	# if linear projection layer is not the same shape as LUT, then initialize with PCA
+	if d_lproj != LUT.shape[1]:
+		pca = PCA(n_components=d_lproj, whiten=True)
+		pca_mat = pca.fit_transform(LUT.T)  # 300 x 100?
+
+	# setup LUT!
+	T_w2v = tf.constant(LUT.astype('float32'))
+
+	T_B = tf.Variable(init_linear_projection(rng, d_w2v, d_lproj, pca_mat), name='B')
+
+	return T_B, T_w2v, T_mask, pca_mat
+
+
+def getEmbeddingWithWord2Vec(words, T_w2v, T_mask):
+	input_shape = words.get_shape().as_list()
+	# print(input_shape)
+	mask =  tf.not_equal(words,0)
+
+	embeded_words = tf.gather(T_w2v,words)*tf.gather(T_mask,words)
+	# print(embeded_words.get_shape().as_list())
+	return embeded_words, mask 
+
+def getAverageRepresentation(sentence):
+	sentence = tf.reduce_sum(sentence,reduction_indices=-2)
+	return sentence
 '''
 	fucntion: getMultiModel
 	parameters:
@@ -583,10 +686,8 @@ def getMultiModel(visual_feature, question_feature, answer_feature, common_space
 	return:
 		loss: tf.float32
 '''
-def getRankingLoss(T_v, T_q, T_a, answer_index=None,alpha = 0.2 ,isTest=False):
+def getRankingLoss(T_v, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
 	
-	# answer_index = tf.expand_dims(answer_index,dim=-1)
-	# tf.tile(answer_index)
 	# compute the loss
 	
 	T_v_shape = T_v.get_shape().as_list()
@@ -632,49 +733,6 @@ def getRankingLoss(T_v, T_q, T_a, answer_index=None,alpha = 0.2 ,isTest=False):
 	else:
 		return scores
 
-# def getRankingLoss_back(T_v, T_q, T_a, answer_index,alpha = 0.2 ):
-	
-# 	# answer_index = tf.expand_dims(answer_index,dim=-1)
-# 	# tf.tile(answer_index)
-# 	# compute the loss
-	
-# 	T_v_shape = T_v.get_shape().as_list()
-# 	T_q_shape = T_q.get_shape().as_list()
-# 	T_a_shape = T_a.get_shape().as_list()
-
-# 	assert T_q_shape == T_v_shape
-
-# 	T_a = tf.nn.l2_normalize(T_a,2)
-# 	T_v = tf.nn.l2_normalize(T_v,1)
-# 	T_q = tf.nn.l2_normalize(T_q,1)
-
-
-# 	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
-
-
-# 	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
-# 	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
-
-	
-
-
-# 	T_p = T_v+T_q 
-
-# 	# --- normalization ---
-
-# 	T_p = tf.nn.l2_normalize(T_p,1)
-# 	right_answer = tf.nn.l2_normalize(right_answer,1)
-# 	error_answer = tf.nn.l2_normalize(error_answer,1)
-
-
-	
-	
-# 	gt = tf.reduce_sum(T_p*right_answer,reduction_indices=-1)
-# 	ft = tf.reduce_sum(T_p*error_answer,reduction_indices=-1)
-# 	loss = alpha - gt + ft
-# 	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
-# 	loss = tf.maximum(0.,loss)
-# 	return loss
 
 '''
 	function: getTripletLoss
@@ -685,8 +743,6 @@ def getRankingLoss(T_v, T_q, T_a, answer_index=None,alpha = 0.2 ,isTest=False):
 '''
 def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	
-	# answer_index = tf.expand_dims(answer_index,dim=-1)
-	# tf.tile(answer_index)
 	# compute the loss
 	
 	T_v_shape = T_v.get_shape().as_list()

@@ -140,7 +140,7 @@ def test_model(model_file, output_file, hf):
 				print('--Valid--, Batch: %d/%d, Batch_size: %d' %(batch_idx+1,num_test_batch,batch_size))
 
 
-def train_model(hf):
+def train_model(hf,f_type):
 	task = 'video-based' # video-based or subtitle-based
 
 	mqa = MovieQA.DataLoader()
@@ -163,8 +163,8 @@ def train_model(hf):
 	'''
 	size_voc = len(v2i)
 
-	video_feature_dims=2048
-	timesteps_v=16 # sequences length for video
+	video_feature_dims=1536
+	timesteps_v=32 # sequences length for video
 	feature_shape = (timesteps_v,video_feature_dims)
 
 	timesteps_q=16 # sequences length for question
@@ -195,7 +195,7 @@ def train_model(hf):
 		configure && runtime environment
 	'''
 	config = tf.ConfigProto()
-	config.gpu_options.per_process_gpu_memory_fraction = 0.3
+	config.gpu_options.per_process_gpu_memory_fraction = 0.4
 	# sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
 	config.log_device_placement=False
 
@@ -276,17 +276,21 @@ def train_model(hf):
 if __name__ == '__main__':
 	isTest = False # True for testing, others for training
 	
-	f_type = 'res'
-	if f_type=='res':
+	f_type = 'InceptionV4'
+	if f_type=='Resnet':
 		feature_path = '/home/wb/res_movie_feature.hdf5'
-	else:
+	elif f_type=='GoogLeNet':
 		feature_path = '/home/wb/movie_feature.hdf5'
+	elif f_type=='InceptionV4':
+		feature_path = '/home/wb/v4_movie_feature.hdf5'
+	else:
+		raise ValueError('Invalid f_type: ' + f_type)
 	# /home/wb/res_movie_feature.hdf5
 	hf = h5py.File(feature_path,'r')
 
 	if not isTest:
 
-		train_model(hf)
+		train_model(hf,f_type)
 	else:
 		model_file = '/home/xyj/usr/local/saved_model/vqa_baseline/rankloss_res/E43_A0.277652370203.ckpt'
 		output_file = '/home/xyj/usr/local/predict_result/vqa_baseline/E43_A0.2776.txt'

@@ -533,7 +533,7 @@ def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
 
 
 
-def getMemoryNetworks(embeded_stories, embeded_question, mask):
+def getMemoryNetworks(embeded_stories, embeded_question, d_lproj, T_B=None):
 
 	'''
 		embeded_stories: (batch_size, num_of_sentence, num_of_words, embeded_words_dims)
@@ -546,27 +546,14 @@ def getMemoryNetworks(embeded_stories, embeded_question, mask):
 	input_dims = stories_shape[-1]
 	output_dims = embeded_question_shape[-1]
 
-	# tiled_mask = tf.tile(tf.expand_dims(mask,dim=-1),[1,1,1,input_dims])
 
-	# embeded_stories = tf.where(tiled_mask,embeded_stories,tf.zeros_like(embeded_stories))
+	embeded_stories = getAverageRepresentation(embeded_stories, T_B, d_lproj)
 
-
-	embeded_stories = tf.reduce_sum(embeded_stories,reduction_indices=2) # # (batch_size,num_of_stentce,input_dims),to get sentence level representation
-	embeded_stories =  tf.nn.l2_normalize(embeded_stories,-1)
-
-	# to do linear transform
-	# W_m = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_m")
-	# embeded_stories = tf.reshape(embeded_stories,(-1,input_dims)) # (batch_size*num_of_stentce,output_dims)
-	# embeded_stories = tf.matmul(embeded_stories,W_m) # (batch_size*num_of_stentce,output_dims)
-
-	# embeded_stories = tf.reshape(embeded_stories,(-1,num_of_sentence,output_dims))
-	# embeded_stories =  tf.nn.l2_normalize(embeded_stories,-1)
-	# ?norm
-	embeded_question =  tf.nn.l2_normalize(embeded_question,-1)
 	
 	embeded_question = tf.tile(tf.expand_dims(embeded_question,dim=1),[1,num_of_sentence,1])
 
 	sen_weight = tf.reduce_sum(embeded_question*embeded_stories,reduction_indices=-1,keep_dims=True)
+
 	sen_weight = tf.nn.softmax(sen_weight,dim=1)
 	sen_weight = tf.tile(sen_weight,[1,1,output_dims])
 
@@ -644,8 +631,20 @@ def getEmbeddingWithWord2Vec(words, T_w2v, T_mask):
 	# print(embeded_words.get_shape().as_list())
 	return embeded_words, mask 
 
-def getAverageRepresentation(sentence):
+def getAverageRepresentation(sentence, T_B, d_lproj):
 	sentence = tf.reduce_sum(sentence,reduction_indices=-2)
+	sentence = tf.nn.l2_normalize(sentence,-1)
+
+	sentence_shape = sentence.get_shape().as_list()
+	if len(sentence_shape)==2:
+		sentence = tf.matmul(sentence,T_B)
+	elif len(sentence_shape)==3:
+		sentence = tf.reshape(sentence,(-1,sentence_shape[-1]))
+		sentence = tf.matmul(sentence,T_B)
+		sentence = tf.reshape(sentence,(-1,sentence_shape[1],d_lproj))
+	else:
+		raise ValueError('Invalid sentence_shape:'+sentence_shape)
+
 	return sentence
 '''
 	fucntion: getMultiModel
@@ -733,6 +732,44 @@ def getRankingLoss(T_v, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
 	else:
 		return scores
 
+'''
+	function: getRankingLoss
+	parameters:
+		answer_index: the ground truth index, one hot vector
+	return:
+		loss: tf.float32
+'''
+def getClassifierLoss(T_s, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
+	
+	# compute the loss
+	
+	T_s_shape = T_s.get_shape().as_list()
+	T_q_shape = T_q.get_shape().as_list()
+	T_a_shape = T_a.get_shape().as_list()
+
+	numOfChoices = T_a_shape[1]
+	common_space_dim = T_a_shape[2]
+
+	assert T_q_shape == T_s_shape
+
+	T_s = tf.nn.l2_normalize(T_s+T_q,1)
+	T_a = tf.nn.l2_normalize(T_a,2)
+
+	T_s = tf.tile(tf.expand_dims(T_s,dim=1),[1,numOfChoices,1])
+
+	# T_s = tf.nn.l2_normalize(T_s*T_a,2)
+	T_h = T_s*T_a
+	T_h = tf.reduce_sum(T_h, reduction_indices=-1)
+
+	scores = T_h
+
+	if not isTest:
+		assert answer_index is not None
+		loss = tf.nn.softmax_cross_entropy_with_logits(labels = answer_index, logits = scores)
+		# acc_value = tf.metrics.accuracy(scores, answer_index)
+		return loss,scores
+	else:
+		return scores
 
 '''
 	function: getTripletLoss

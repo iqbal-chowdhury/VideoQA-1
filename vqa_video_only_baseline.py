@@ -167,8 +167,8 @@ def train_model(hf,f_type):
 	timesteps_v=32 # sequences length for video
 	feature_shape = (timesteps_v,video_feature_dims)
 
-	timesteps_q=16 # sequences length for question
-	timesteps_a=10 # sequences length for anwser
+	timesteps_q=25 # sequences length for question
+	timesteps_a=32 # sequences length for anwser
 	numberOfChoices = 5 # for input choices, one for correct, one for wrong answer
 
 	word_embedding_size = 300
@@ -195,7 +195,7 @@ def train_model(hf,f_type):
 		configure && runtime environment
 	'''
 	config = tf.ConfigProto()
-	config.gpu_options.per_process_gpu_memory_fraction = 0.4
+	config.gpu_options.per_process_gpu_memory_fraction = 0.2
 	# sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
 	config.log_device_placement=False
 
@@ -208,7 +208,7 @@ def train_model(hf,f_type):
 		training parameters
 	'''
 
-	batch_size = 64
+	batch_size = 8
 	total_train_qa = len(trained_video_QAs)
 	total_val_qa = len(val_video_QAs)
 

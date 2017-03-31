@@ -6,6 +6,7 @@ import tensorflow as tf
 
 import numpy as np
 from sklearn.decomposition import PCA
+import cPickle as pickle
 
 def get_fans(shape):
 	if len(shape) == 2:
@@ -88,21 +89,21 @@ def get_init_state(x, output_dims):
 	initial_state = tf.tile(initial_state,[1,output_dims])
 	return initial_state
 
-'''
-	function: getVideoEncoder
-	parameters:
 
-		x: batch_size, timesteps , dims
-		output_dims: the output of the GRU dimensions
-		num_class: number of class : ucf-101: 101
-	return:
-		the last GRU state, 
-		or
-		the sequences of the hidden states
-
-'''
-# def getModel(x, timesteps, input_dims, output_dims, num_class):
 def getVideoEncoder(x, output_dims, return_sequences=False):
+	'''
+		function: getVideoEncoder
+		parameters:
+
+			x: batch_size, timesteps , dims
+			output_dims: the output of the GRU dimensions
+			num_class: number of class : ucf-101: 101
+		return:
+			the last GRU state, 
+			or
+			the sequences of the hidden states
+
+	'''
 	input_shape = x.get_shape().as_list()
 	assert len(input_shape)==3 
 	timesteps = input_shape[1]
@@ -197,19 +198,18 @@ def getVideoEncoder(x, output_dims, return_sequences=False):
 	else:
 		return last_output
 
-'''
-	function: getEmbedding
-	parameters:
-		words: int, word index ; or a np.int32 list ## sample(null) * input_words_sequential
-		size_voc: size of vocabulary
-		embedding_size: the dimension after embedding
-	return:
-		embeded_words:the embeded words with shape (sample * timesteps * embedding dims)
-		mask: each element in mask vector is 0 or 1,  indicate there is a word or a padding zero
-'''
+
 def getEmbedding(words, size_voc, word_embedding_size):
-	# words = list(words)
-	# W_e = init_weight_variable((size_voc,word_embedding_size),init_method='uniform',name='W_e') # not share the variable
+	'''
+		function: getEmbedding
+		parameters:
+			words: int, word index ; or a np.int32 list ## sample(null) * input_words_sequential
+			size_voc: size of vocabulary
+			embedding_size: the dimension after embedding
+		return:
+			embeded_words:the embeded words with shape (sample * timesteps * embedding dims)
+			mask: each element in mask vector is 0 or 1,  indicate there is a word or a padding zero
+	'''
 
 	W_e = tf.get_variable('W_e',(size_voc,word_embedding_size),initializer=tf.random_uniform_initializer(-0.05,0.05)) # share the embedding matrix
 	embeded_words = tf.gather(W_e, words)
@@ -218,18 +218,19 @@ def getEmbedding(words, size_voc, word_embedding_size):
 
 
 
-'''
-	function: getQuestionEncoder
-	parameters:
-		embeded_words: sample*timestep*dim
-		output_dims: the GRU hidden dim
-		mask: bool type , samples * timestep
-	return:
-		the last GRU state, 
-		or
-		the sequences of the hidden states
-'''
 def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False):
+
+	'''
+		function: getQuestionEncoder
+		parameters:
+			embeded_words: sample*timestep*dim
+			output_dims: the GRU hidden dim
+			mask: bool type , samples * timestep
+		return:
+			the last GRU state, 
+			or
+			the sequences of the hidden states
+	'''
 	input_shape = embeded_words.get_shape().as_list()
 	assert len(input_shape)==3 
 
@@ -349,7 +350,6 @@ def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False)
 	axis = [1,0] + list(range(2,3))
 	outputs = tf.transpose(outputs,perm=axis)
 
-
 	if return_sequences:
 		return outputs
 	else:
@@ -357,16 +357,17 @@ def getQuestionEncoder(embeded_words, output_dims, mask, return_sequences=False)
 
 
 
-'''
-	function: getAnswerEmbedding
-	parameters:
-		words: int, word index ; or a np.int32 list ## sample(null) * numebrOfChoice * timesteps
-		size_voc: size of vocabulary
-		embedding_size: the dimension after embedding
-	return:
-		the embeded answers with shape(batch_size, numberOfChoices, timesteps, word_embedding_size)
-'''
+
 def getAnswerEmbedding(words, size_voc, word_embedding_size):
+	'''
+		function: getAnswerEmbedding
+		parameters:
+			words: int, word index ; or a np.int32 list ## sample(null) * numebrOfChoice * timesteps
+			size_voc: size of vocabulary
+			embedding_size: the dimension after embedding
+		return:
+			the embeded answers with shape(batch_size, numberOfChoices, timesteps, word_embedding_size)
+	'''
 	assert len(words.get_shape().as_list())==3 #
 	input_shape = words.get_shape().as_list()
 	numberOfChoices = input_shape[1]
@@ -384,19 +385,20 @@ def getAnswerEmbedding(words, size_voc, word_embedding_size):
 	return embeded_words, mask 
 
 
-'''
-	function: getAnswerEncoder
-	parameters:
-		embeded_words: samples * numberOfChoices * timesteps  * dim
-		output_dim: output of GRU, the dimension of answering vector
-		mask : bool type, mask the embeded_words
-		num_class: number of classifier
-	return:
-		the last encoded answers with shape(batch_size, numberOfChoices, output_dims)
-		or
-		the sequences.... with shape(batch_size, numberOfChoices, numberOfChoices, output_dims)
-'''
+
 def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
+	'''
+		function: getAnswerEncoder
+		parameters:
+			embeded_words: samples * numberOfChoices * timesteps  * dim
+			output_dim: output of GRU, the dimension of answering vector
+			mask : bool type, mask the embeded_words
+			num_class: number of classifier
+		return:
+			the last encoded answers with shape(batch_size, numberOfChoices, output_dims)
+			or
+			the sequences.... with shape(batch_size, numberOfChoices, numberOfChoices, output_dims)
+	'''
 	input_shape = embeded_words.get_shape().as_list()
 	assert len(input_shape)==4 
 
@@ -524,7 +526,7 @@ def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
 	outputs = tf.transpose(outputs,perm=axis)
 
 	last_output = tf.reshape(last_output,(-1,numberOfChoices,output_dims))
-	
+	print('outputs:....',outputs.get_shape().as_list())
 	if return_sequences:
 		return outputs
 	else:
@@ -619,6 +621,8 @@ def setWord2VecModelConfiguration(v2i,w2v,d_w2v,d_lproj):
 
 	T_B = tf.Variable(init_linear_projection(rng, d_w2v, d_lproj, pca_mat), name='B')
 
+
+
 	return T_B, T_w2v, T_mask, pca_mat
 
 
@@ -646,17 +650,18 @@ def getAverageRepresentation(sentence, T_B, d_lproj):
 		raise ValueError('Invalid sentence_shape:'+sentence_shape)
 
 	return sentence
-'''
-	fucntion: getMultiModel
-	parameters:
-		visual_feature: batch_size * visual_encoded_dim
-		question_feature: batch_size * question_encoded_dim
-		answer_feature: batch_zize * numberOfChoices * answer_encoded_dim
-		common_space_dim: embedding the visual,question,answer to the common space
-	return: the embeded vectors(v,q,a)
-'''
+
 
 def getMultiModel(visual_feature, question_feature, answer_feature, common_space_dim):
+	'''
+		fucntion: getMultiModel
+		parameters:
+			visual_feature: batch_size * visual_encoded_dim
+			question_feature: batch_size * question_encoded_dim
+			answer_feature: batch_zize * numberOfChoices * answer_encoded_dim
+			common_space_dim: embedding the visual,question,answer to the common space
+		return: the embeded vectors(v,q,a)
+	'''
 	visual_shape = visual_feature.get_shape().as_list()
 	question_shape = question_feature.get_shape().as_list()
 	answer_shape = answer_feature.get_shape().as_list()
@@ -678,16 +683,16 @@ def getMultiModel(visual_feature, question_feature, answer_feature, common_space
 	T_a = tf.reshape(T_a,(-1,answer_shape[1],common_space_dim))
 
 	return T_v,T_q,T_a
-'''
-	function: getRankingLoss
-	parameters:
-		answer_index: the ground truth index, one hot vector
-	return:
-		loss: tf.float32
-'''
+
 def getRankingLoss(T_v, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
 	
-	# compute the loss
+	'''
+		function: getRankingLoss
+		parameters:
+			answer_index: the ground truth index, one hot vector
+		return:
+			loss: tf.float32
+	'''
 	
 	T_v_shape = T_v.get_shape().as_list()
 	T_q_shape = T_q.get_shape().as_list()
@@ -732,16 +737,16 @@ def getRankingLoss(T_v, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
 	else:
 		return scores
 
-'''
-	function: getRankingLoss
-	parameters:
-		answer_index: the ground truth index, one hot vector
-	return:
-		loss: tf.float32
-'''
-def getClassifierLoss(T_s, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=False):
+
+def getClassifierLoss(T_s, T_q, T_a, answer_index=None, isTest=False):
 	
-	# compute the loss
+	'''
+		function: getRankingLoss
+		parameters:
+			answer_index: the ground truth index, one hot vector
+		return:
+			loss: tf.float32
+	'''
 	
 	T_s_shape = T_s.get_shape().as_list()
 	T_q_shape = T_q.get_shape().as_list()
@@ -771,16 +776,16 @@ def getClassifierLoss(T_s, T_q, T_a, answer_index=None, alpha = 0.2 ,isTest=Fals
 	else:
 		return scores
 
-'''
-	function: getTripletLoss
-	parameters:
-		answer_index: the ground truth index, one hot vector
-	return:
-		loss: tf.float32
-'''
+
 def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	
-	# compute the loss
+	'''
+		function: getTripletLoss
+		parameters:
+			answer_index: the ground truth index, one hot vector
+		return:
+			loss: tf.float32
+	'''
 	
 	T_v_shape = T_v.get_shape().as_list()
 	T_q_shape = T_q.get_shape().as_list()
@@ -813,178 +818,195 @@ def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	loss = tf.maximum(0.,loss)
 	return loss
 
-
-if __name__=='__main__':
-	''' 
-		for video encoding
+def getVideoSemanticEmbedding(x,w2v,T_B,pca_mat=None):
 	'''
-	# timesteps=10
-	# input_dims=100
-	# output_dims=100
-	# num_class=10
-
-	# print('test..')
-	# input_x = tf.placeholder(tf.float32, shape=(None, timesteps, input_dims),name='input_x')
-	# y = tf.placeholder(tf.float32,shape=(None, num_class))
-
-	# scores = getVideoEncoder(input_x, output_dims, num_class)
-	# # train module
-	# loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = scores))
-	# acc_value = tf.metrics.accuracy(y, scores)
-	# optimizer = tf.train.GradientDescentOptimizer(0.01)
-	# train = optimizer.minimize(loss)
-
-	# # runtime environment 
-	# init = tf.global_variables_initializer()
-	# sess = tf.Session()
-	# sess.run(init)
-	# with sess.as_default():
-	# 	for i in range(1000):
-	# 		data_x = np.random.random((100,timesteps,input_dims))
-	# 		data_y = np.zeros((100,num_class))
-	# 		data_y[:,1]=1
-	# 		_, l = sess.run([train,loss],feed_dict={input_x:data_x,y:data_y})
-	# 		print(l)
-
-	# print('done..')
+		x: input video cnn feature with size of (batch_size, timesteps, channels, height, width)
+		w2v: word 2 vec (|v|,dim)
 	'''
-		for question encoding
-	'''
-	# print('test question encording ...')
+	input_shape = x.get_shape().as_list()
+	w2v_shape = w2v.get_shape().as_list()
+	assert(len(input_shape)==5)
+	axis = [0,1,3,4,2]
+	x = tf.transpose(x,perm=axis)
+	x = tf.reshape(x,(-1,input_shape[2]))
+	# x = tf.nn.l2_normalize(x,-1)
 
-	# size_voc = 10
-	# timesteps=10
-	# word_embedding_size = 10
-	# words = [1,2,3,4,5]
-	# num_class = 101
-	# question_embedding_size = 100
-	# with tf.variable_scope('share_embedding_matrix') as scope:
-	# 	input_question = tf.placeholder(tf.int32, shape=(None,timesteps), name='input_question')
-	# 	y = tf.placeholder(tf.float32,shape=(None, num_class))
-	# 	# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
-	# 	# scope.reuse_variables() # notice this line for share the variable
-	# 	embeded_words, mask = getEmbedding(input_question, size_voc, word_embedding_size)
-	# 	embeded_question,outputs = getQuestionEncoder(embeded_words, question_embedding_size, mask, num_class)
+	if pca_mat is not None:
+		linear_proj = tf.Variable(0.1*pca_mat,dtype='tf.float32',name='visual_linear_proj')
+	else:
+		linear_proj = init_weight_variable((input_shape[2],w2v_shape[-1]), init_method='uniform', name='visual_linear_proj')
 
-	# 	# sess.run(init)
-	# 	# train module
-	# 	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
-	# 	acc_value = tf.metrics.accuracy(y, embeded_question)
-	# 	optimizer = tf.train.GradientDescentOptimizer(0.01)
-	# 	train = optimizer.minimize(loss)
+	x = tf.matmul(x,linear_proj) 
+	x = tf.nn.l2_normalize(x,-1)
 
-	# # runtime environment 
-	# init = tf.global_variables_initializer()
-	# sess = tf.Session()
-	# sess.run(init)
-	# with sess.as_default():
+	w2v_cov = tf.matmul(tf.transpose(w2v,perm=[1,0]),w2v)
 
-	# 	for i in range(1):
-	# 		data_x = np.random.randint(0,10,size=(2,timesteps),dtype='int32')
-	# 		data_y = np.zeros((2,num_class))
-	# 		data_y[:,1]=1
-	# 		_, l, output_embed,mask_p,outpus_p = sess.run([train,loss,embeded_words,mask,outputs],feed_dict={input_question:data_x,y:data_y})
-	# 		print(l)
-	# 		print(data_x)
-	# 		print(mask_p)
+	x = tf.matmul(x,w2v_cov) # (batch_size*timesteps*height*width, |V|)
 
-	'''
-		for answering encoding
-	'''
-	# print('test answer encording ...')
+	x = tf.reshape(x,(-1,input_shape[1],input_shape[3],input_shape[4],w2v_shape[-1]))
+	axis = [0,1,4,2,3]
+	x = tf.transpose(x,perm=axis)
+	
+	# can be extended to different architecture
+	x = tf.reduce_sum(x,reduction_indices=[1,3,4])
+	x = tf.nn.l2_normalize(x,-1)
 
-	# size_voc = 10
-	# timesteps=10
-	# word_embedding_size = 10
-	# words = [1,2,3,4,5]
-	# num_class = 5
-	# numberOfChoices = 5
-	# question_embedding_size = 100
-
-	# with tf.variable_scope('share_embedding_matrix') as scope:
-	# 	input_question = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps), name='input_answer')
-	# 	y = tf.placeholder(tf.float32,shape=(None, num_class))
-	# 	# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
-	# 	# scope.reuse_variables() # notice this line for share the variable
-	# 	embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
-	# 	embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
-	# 	# sess.run(init)
-	# 	# train module
-	# 	loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = y, logits = embeded_question))
-	# 	acc_value = tf.metrics.accuracy(y, embeded_question)
-	# 	optimizer = tf.train.GradientDescentOptimizer(0.01)
-	# 	train = optimizer.minimize(loss)
-
-	# # runtime environment 
-	# init = tf.global_variables_initializer()
-	# sess = tf.Session()
-	# sess.run(init)
-	# with sess.as_default():
-
-	# 	for i in range(1):
-	# 		data_x = np.random.randint(0,10,size=(2,numberOfChoices, timesteps),dtype='int32')
-	# 		data_y = np.zeros((2,num_class))
-	# 		data_y[:,1]=1
-	# 		_, l, output_embed,mask_p = sess.run([train,loss,embeded_words,mask],feed_dict={input_question:data_x,y:data_y})
-	# 		print(l)
-	# 		print(data_x)
-	# 		print(mask_p)
-
-	'''
-		for training loss
-	'''
-	print('test answer encording ...')
-
-	size_voc = 10
-	timesteps=10
-	word_embedding_size = 10
-	words = [1,2,3,4,5]
-	num_class = 5
-	numberOfChoices = 2
-	embedding_size = 100
-	common_space_dim = 200
-	with tf.variable_scope('share_embedding_matrix') as scope:
-		visual_feature = tf.placeholder(tf.float32, shape=(None,embedding_size), name='visual_feature')
-		question_feature = tf.placeholder(tf.float32, shape=(None,embedding_size), name='question_feature')
-		answer_feature = tf.placeholder(tf.float32, shape=(None,numberOfChoices,embedding_size), name='answer_feature')
-		y = tf.placeholder(tf.float32,shape=(None, numberOfChoices))
-		# embeded_words1, mask1 = getEmbedding(input_question, size_voc, word_embedding_size)
-		# scope.reuse_variables() # notice this line for share the variable
-		T_v, T_q, T_a = getMultiModel(visual_feature, question_feature, answer_feature, common_space_dim)
-
-		# loss, scores = getRankingLoss(T_v, T_q, T_a, y)
-		loss = getTripletLoss(T_v, T_q, T_a, y)
-
-		# embeded_words, mask = getAnswerEmbedding(input_question, size_voc, word_embedding_size)
-		# embeded_question = getAnswerEncoder(embeded_words, question_embedding_size, mask, 1)
-		# sess.run(init)
-		# train module
-		loss = tf.reduce_mean(loss)
-		# acc_value = tf.metrics.accuracy(y, embeded_question)
-		optimizer = tf.train.GradientDescentOptimizer(0.01)
-		train = optimizer.minimize(loss)
-
-	# runtime environment 
-	init = tf.global_variables_initializer()
-	sess = tf.Session()
-	sess.run(init)
-	with sess.as_default():
-
-		for i in range(10000):
-			batch_size = 64
-			data_v = np.random.random((batch_size,embedding_size))
-			data_q = np.random.random((batch_size,embedding_size))
-			data_a = np.random.random((batch_size,numberOfChoices, embedding_size))
-
-			data_y = np.zeros((batch_size,numberOfChoices),dtype='float32')
-			data_y[:,1]=1.0
-			_, l = sess.run([train,loss],feed_dict={visual_feature:data_v, question_feature:data_q, answer_feature:data_a, y:data_y})
-			print(l)
-
-
+	x = tf.matmul(x,T_B)
 
 	
 
+	return x
+
+
+# def getRFRecVideoEncoder(x, initial_state, return_sequences=True):
+# 	input_shape = x.get_shape().as_list()
+# 	assert len(input_shape)==3 
+# 	timesteps = input_shape[1]
+# 	input_dims = input_shape[2]
+
+# 	output_dims = initial_state.get_shape().as_list()[-1]
+
+# 	# print('initial_state.get_shape()',initial_state.get_shape())
+# 	# print('x.get_shape()',x.get_shape())
+
+# 	# initialize the parameters
+# 	# W_r,U_r,b_r; W_z, U_z, b_z; W_h, U_h, b_h
+# 	W_r = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_r")
+# 	W_z = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_z")
+# 	W_h = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_h")
+
+# 	U_r = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_r")
+# 	U_z = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_z")
+# 	U_h = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_h")
+
+# 	b_r = init_bias_variable((output_dims,),name="b_r")
+# 	b_z = init_bias_variable((output_dims,),name="b_z")
+# 	b_h = init_bias_variable((output_dims,),name="b_h")
+
+
+# 	# batch_size x timesteps x dim -> timesteps x batch_size x dim
+# 	axis = [1,0]+list(range(2,3))  # axis = [1,0,2]
+# 	x = tf.transpose(x, perm=axis) # permutate the input_x --> timestemp, batch_size, input_dims
+
+# 	input_x = tf.TensorArray(
+#             dtype=x.dtype,
+#             size=timesteps,
+#             tensor_array_name='input_x')
+
+# 	if hasattr(input_x, 'unstack'):
+# 		input_x = input_x.unstack(x)
+# 	else:
+# 		input_x = input_x.unpack(x)	
+
+
+# 	hidden_state_t_rfr = tf.TensorArray(
+#             dtype=tf.float32,
+#             size=timesteps,
+#             tensor_array_name='hidden_state_t_rfr')
+
+# 	# if hasattr(hidden_state_t_rfr, 'unstack'):
+# 	# 	hidden_state_t_rfr = hidden_state_t_rfr.unstack(hidden_state_t_rfr)
+# 	# else:
+# 	# 	hidden_state_t_rfr = hidden_state_t_rfr.unpack(hidden_state_t_rfr)
+
+
+# 	def step(time, hidden_state_t_rfr, h_tm1):
+# 		x_t = input_x.read(time) # batch_size * dim
+
+# 		preprocess_x_r = matmul_wx(x_t, W_r, b_r, output_dims)
+# 		preprocess_x_z = matmul_wx(x_t, W_z, b_z, output_dims)
+# 		preprocess_x_h = matmul_wx(x_t, W_h, b_h, output_dims)
+
+# 		r = tf.nn.sigmoid(preprocess_x_r+ matmul_uh(U_r,h_tm1))
+# 		z = tf.nn.sigmoid(preprocess_x_z+ matmul_uh(U_z,h_tm1))
+# 		hh = tf.nn.tanh(preprocess_x_h+ matmul_uh(U_h,h_tm1))
+
+# 		h = (1-z)*hh + z*h_tm1
+
+# 		hidden_state_t_rfr = hidden_state_t_rfr.write(time, h)
+
+# 		return (time+1,hidden_state_t_rfr,h)
+
+	
+
+
+# 	time = tf.constant(0, dtype='int32', name='time')
+
+
+# 	ret_out = tf.while_loop(
+#             cond=lambda time, *_: time < timesteps,
+#             body=step,
+#             loop_vars=(time, hidden_state_t_rfr, initial_state),
+#             parallel_iterations=32,
+#             swap_memory=True)
+
+# 	hidden_state_t_rfr = ret_out[1]
+# 	last_output = ret_out[-1] 
+
+# 	if hasattr(hidden_state_t_rfr, 'stack'):
+# 		outputs = hidden_state_t_rfr.stack()
+# 	else:
+# 		outputs = hidden_state_t_rfr.pack()
+
+# 	outputs = tf.reshape(outputs,(timesteps,-1,output_dims))
+# 	axis = [1,0] + list(range(2,3))
+# 	outputs = tf.transpose(outputs,perm=axis)
+
+# 	print('outputs:',outputs.get_shape().as_list())
+# 	if return_sequences:
+# 		return outputs
+# 	else:
+# 		return last_output
+
+
+
+# def getRFRecClassifierLoss(T_v, T_q, T_a, T_B,
+# 				true_frames_index=None,answer_index=None):
+	
+# 	v_shape = T_v.get_shape().as_list() # batch_size x timestep x output_dims
+# 	q_shape = T_q.get_shape().as_list()
+# 	a_shape = T_a.get_shape().as_list()
+
+# 	numOfChoices = a_shape[1]
+# 	common_space_dim = a_shape[2]
+
+
+
+# 	W_rfr = init_weight_variable((v_shape[-1],2),init_method='glorot_uniform',name="W_rfr")
+# 	b_rfr = init_bias_variable((2,),name="b_rfr")
+
+# 	T_v = tf.nn.l2_normalize(T_v,-1) # l2_normalization
+
+# 	T_v = tf.reshape(T_v,(-1,v_shape[-1]))
+# 	rfr_score = tf.matmul(T_v, W_rfr)+tf.reshape(b_rfr,(1,2))
+# 	rfr_score = tf.reshape(rfr_score,(-1, v_shape[1], 2))
+
+# 	rfr_loss = tf.nn.softmax_cross_entropy_with_logits(labels = true_frames_index, logits = rfr_score)
+
+
+	
+# 	T_v = tf.reshape(T_v,(-1,v_shape[1],v_shape[2]))
+# 	T_v = tf.reduce_sum(T_v,reduction_indices=1)
+# 	T_v = tf.matmul(T_v,T_B)
+
+# 	T_s = tf.nn.l2_normalize(T_v+T_q,1)
+# 	T_a = tf.nn.l2_normalize(T_a,2)
+
+# 	T_s = tf.tile(tf.expand_dims(T_s,dim=1),[1,numOfChoices,1])
+
+# 	T_h = T_s*T_a
+# 	T_h = tf.reduce_sum(T_h, reduction_indices=-1)
+
+# 	qa_score = T_h
+# 	qa_loss = tf.nn.softmax_cross_entropy_with_logits(labels = answer_index, logits = qa_score)
+	
+# 	return rfr_score,rfr_loss,qa_score,qa_loss
+
+
+
+
+if __name__=='__main__':
+	print('video question answering model module!')
 
 	
 

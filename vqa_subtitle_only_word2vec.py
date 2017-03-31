@@ -9,7 +9,7 @@ import ModelUtil
 import word2vec as w2v
 
 # os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import tensorflow as tf
 
@@ -103,7 +103,7 @@ def train_model(pretrained_model=None):
 	task = 'video-based' # video-based or subtitle-based
 
 	mqa = MovieQA.DataLoader()
-	stories_for_create_dict, full_video_QAs = mqa.get_story_qa_data('train', 'subtitle')
+	stories_for_create_dict, full_video_QAs = mqa.get_story_qa_data('full', 'subtitle')
 	stories_for_create_dict = DataUtil.preprocess_stories(stories_for_create_dict,max_words=40)
 
 	w2v_mqa_model_filename = './model/movie_plots_1364.d-300.mc1.w2v'

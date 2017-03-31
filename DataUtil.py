@@ -306,6 +306,9 @@ def getBatchVideoFeature(batch_qas_list, hf, feature_shape):
 		qid = qa.qid
 		video_clips = qa.video_clips
 		imdb_key = qa.imdb_key
+
+
+
 		clips_features = []
 		if len(video_clips) != 0:
 			for clip in video_clips:
@@ -314,23 +317,43 @@ def getBatchVideoFeature(batch_qas_list, hf, feature_shape):
 					clips_features.extend(hf[dataset][:]) # clips_features.shape
 			# print(idx,qid,len(clips_features))
 
-			if(len(clips_features)<=0):
-				# if there are not vlid features
-				for clip in hf[imdb_key].keys():
-					dataset = imdb_key+'/'+clip
-					clips_features.extend(hf[dataset][:]) # clips_features.shape
+		if(len(clips_features)<=0):
+			# if there are not vlid features
+			for clip in hf[imdb_key].keys():
+				dataset = imdb_key+'/'+clip
+				clips_features.extend(hf[dataset][:]) # clips_features.shape
 
-			
-			if(len(clips_features)>=timesteps):
-				interval = int(math.floor((len(clips_features)-1)/(timesteps-1)))
-				input_video[idx] = clips_features[0::interval][0:timesteps]
-			else:
-				input_video[idx][:len(clips_features)] = clips_features
-				for last_idx in xrange(len(clips_features),timesteps):
-					input_video[idx][last_idx]=clips_features[-1]
+		
+		if(len(clips_features)>=timesteps):
+			interval = int(math.floor((len(clips_features)-1)/(timesteps-1)))
+			input_video[idx] = clips_features[0::interval][0:timesteps]
+		else:
+			input_video[idx][:len(clips_features)] = clips_features
+			for last_idx in xrange(len(clips_features),timesteps):
+				input_video[idx][last_idx]=clips_features[-1]
+
+
+		# if qid not in hf_out.keys():
+		# 	dset = hf_out.create_dataset(qid, feature_shape, dtype='f')
+		# 	dset[:] = input_video[idx]
+
 
 	return input_video
 
+def getBatchVideoFeatureFromQid(batch_qas_list, hf, feature_shape):
+	'''
+		video-based QA
+		there are video clips in all QA pairs.  
+	'''
+
+	batch_size = len(batch_qas_list)
+	input_video = np.zeros((batch_size,)+tuple(feature_shape),dtype='float32')
+
+	timesteps = feature_shape[0]
+	for idx, qa in enumerate(batch_qas_list):
+		qid = qa.qid
+		input_video[idx] = hf[qid][:]
+	return input_video
 
 def getBatchIndexedStories(batch_qa_list,stories,v2i,story_shape):
 	batch_size = len(batch_qa_list)
@@ -343,12 +366,76 @@ def getBatchIndexedStories(batch_qa_list,stories,v2i,story_shape):
 		if interval != 0:
 			for k in xrange(story_shape[0]):
 				# if(k<story_shape[0]):
-				input_stories[idx][k] = stories[imdb_key][k*interval][:story_shape[1]]
+				input_stories[idx][k] = stories[imdb_key][k*interval,:story_shape[1]]
 		else:
-			input_stories[idx][:len(stories[imdb_key])] = stories[imdb_key][:][:story_shape[1]]
+			input_stories[idx][:len(stories[imdb_key])] = stories[imdb_key][:,:story_shape[1]]
 
 	return input_stories
 
+def getBatchRfrVideoFeature(batch_qa, hf, feature_shape,false_frame_num=2):
+	batch_size = len(batch_qa)
+	input_video = np.zeros((batch_size,)+tuple(feature_shape),dtype='float32')
+
+	timesteps = feature_shape[0]
+	rfr_lables = np.zeros((batch_size,timesteps,2),dtype='int32')
+	rfr_lables[:,:,1] = 1
+	
+	for idx, qa in enumerate(batch_qa):
+		qid = qa.qid
+		video_clips = qa.video_clips
+		imdb_key = qa.imdb_key
+		clips_features = []
+		false_clips_features = []
+		if len(video_clips) != 0:
+			for clip in video_clips:
+				dataset = imdb_key+'/'+clip
+				if imdb_key in hf.keys() and clip in hf[imdb_key].keys():
+					clips_features.extend(hf[dataset][:]) # clips_features.shape
+				
+
+		for clip in hf[imdb_key].keys():
+			dataset = imdb_key+'/'+clip
+			if clip not in video_clips:
+				false_clips_features.extend(hf[dataset][:])
+
+
+		if(len(clips_features)<=0):
+			# if there are not vlid features
+			for clip in hf[imdb_key].keys():
+				dataset = imdb_key+'/'+clip
+				clips_features.extend(hf[dataset][:]) # clips_features.shape
+
+		
+		if(len(clips_features)>=timesteps):
+			interval = int(math.floor((len(clips_features)-1)/(timesteps-1)))
+			input_video[idx] = clips_features[0::interval][0:timesteps]
+		else:
+			input_video[idx][:len(clips_features)] = clips_features
+			for last_idx in xrange(len(clips_features),timesteps):
+				input_video[idx][last_idx]=clips_features[-1]
+
+		false_clips_features = np.random.permutation(false_clips_features)
+
+		false_frame_pos = np.random.permutation(range(0,timesteps))[:false_frame_num]
+		for _,ffp in enumerate(false_frame_pos):
+			input_video[idx][ffp] = false_clips_features[ffp]
+			rfr_lables[idx,ffp,0] = 1
+			rfr_lables[idx,ffp,1] = 0
+
+	return input_video, rfr_lables
+
+
+def split_stories(full_stories,train_movies,val_movies):
+	train_stories = {}
+	val_stories = {}
+	for tm in train_movies:
+		train_stories[tm] = full_stories[tm]
+	for vm in val_movies:
+		val_stories[vm] = full_stories[vm]
+
+	print('num of train stories:',len(train_stories))
+	print('num of val stories:',len(val_stories))
+	return train_stories,val_stories
 
 
 def main():

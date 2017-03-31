@@ -71,8 +71,8 @@ def test_model(model_file, output_file, hf):
 	timesteps_v=16 # sequences length for video
 	feature_shape = (timesteps_v,video_feature_dims)
 
-	timesteps_q=16 # sequences length for question
-	timesteps_a=10 # sequences length for anwser
+	nql=25 # sequences length for question
+	nqa=32 # sequences length for anwser
 	numberOfChoices = 5 # for input choices, one for correct, one for wrong answer
 
 	word_embedding_size = 300
@@ -85,8 +85,8 @@ def test_model(model_file, output_file, hf):
 	print('building model ...')
 
 	input_video = tf.placeholder(tf.float32, shape=(None, timesteps_v, video_feature_dims),name='input_video')
-	input_question = tf.placeholder(tf.int32, shape=(None,timesteps_q), name='input_question')
-	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps_a), name='input_answer')
+	input_question = tf.placeholder(tf.int32, shape=(None,nql), name='input_question')
+	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,nqa), name='input_answer')
 
 
 	scores = build_model(input_video, visual_embedding_dims, 
@@ -163,12 +163,12 @@ def train_model(hf,f_type):
 	'''
 	size_voc = len(v2i)
 
-	video_feature_dims=1536
+	video_feature_dims=1024
 	timesteps_v=32 # sequences length for video
 	feature_shape = (timesteps_v,video_feature_dims)
 
-	timesteps_q=25 # sequences length for question
-	timesteps_a=32 # sequences length for anwser
+	nql=25 # sequences length for question
+	nqa=32 # sequences length for anwser
 	numberOfChoices = 5 # for input choices, one for correct, one for wrong answer
 
 	word_embedding_size = 300
@@ -181,8 +181,8 @@ def train_model(hf,f_type):
 	print('building model ...')
 
 	input_video = tf.placeholder(tf.float32, shape=(None, timesteps_v, video_feature_dims),name='input_video')
-	input_question = tf.placeholder(tf.int32, shape=(None,timesteps_q), name='input_question')
-	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,timesteps_a), name='input_answer')
+	input_question = tf.placeholder(tf.int32, shape=(None,nql), name='input_question')
+	input_answer = tf.placeholder(tf.int32, shape=(None,numberOfChoices,nqa), name='input_answer')
 
 	y = tf.placeholder(tf.float32,shape=(None, numberOfChoices))
 
@@ -236,8 +236,8 @@ def train_model(hf,f_type):
 				batch_qa = trained_video_QAs[batch_idx*batch_size:min((batch_idx+1)*batch_size,total_train_qa)]
 
 
-				data_q,data_a,data_y = DataUtil.getBatchIndexedQAs(batch_qa,QA_words,v2i, nql=16, nqa=10, numOfChoices=numberOfChoices)
-				data_v = DataUtil.getBatchVideoFeature(batch_qa, QA_words, hf, feature_shape)
+				data_q,data_a,data_y = DataUtil.getBatchIndexedQAs(batch_qa,v2i, nql=nql, nqa=nqa, numOfChoices=numberOfChoices)
+				data_v = DataUtil.getBatchVideoFeature(batch_qa, hf, feature_shape)
 				_, l, s = sess.run([train,loss,scores],feed_dict={input_video:data_v, input_question:data_q, input_answer:data_a, y:data_y})
 
 				num_correct = np.sum(np.where(np.argmax(s,axis=-1)==np.argmax(data_y,axis=-1),1,0))
@@ -251,8 +251,8 @@ def train_model(hf,f_type):
 				batch_qa = val_video_QAs[batch_idx*batch_size:min((batch_idx+1)*batch_size,total_val_qa)]
 
 
-				data_q,data_a,data_y = DataUtil.getBatchIndexedQAs(batch_qa,QA_words,v2i, nql=16, nqa=10, numOfChoices=numberOfChoices)
-				data_v = DataUtil.getBatchVideoFeature(batch_qa, QA_words, hf, feature_shape)
+				data_q,data_a,data_y = DataUtil.getBatchIndexedQAs(batch_qa,v2i, nql=nql, nqa=nqa, numOfChoices=numberOfChoices)
+				data_v = DataUtil.getBatchVideoFeature(batch_qa, hf, feature_shape)
 
 				l, s = sess.run([loss,scores],feed_dict={input_video:data_v, input_question:data_q, input_answer:data_a, y:data_y})
 
@@ -276,7 +276,7 @@ def train_model(hf,f_type):
 if __name__ == '__main__':
 	isTest = False # True for testing, others for training
 	
-	f_type = 'InceptionV4'
+	f_type = 'GoogLeNet'
 	if f_type=='Resnet':
 		feature_path = '/home/wb/res_movie_feature.hdf5'
 	elif f_type=='GoogLeNet':

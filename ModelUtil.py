@@ -535,7 +535,37 @@ def getAnswerEncoder(embeded_words, output_dims, mask, return_sequences=False):
 
 
 
-def getMemoryNetworks(embeded_stories, embeded_question, d_lproj, T_B=None):
+def getMemoryNetworks(embeded_stories, embeded_question, d_lproj, T_B=None, return_sequences=False):
+
+	'''
+		embeded_stories: (batch_size, num_of_sentence, num_of_words, embeded_words_dims)
+		embeded_question:(batch_size, embeded_words_dims)
+		output_dims: the dimension of stories 
+	'''
+	stories_shape = embeded_stories.get_shape().as_list()
+	embeded_question_shape = embeded_question.get_shape().as_list()
+	num_of_sentence = stories_shape[-3]
+	input_dims = stories_shape[-1]
+	output_dims = embeded_question_shape[-1]
+
+
+	embeded_stories = getAverageRepresentation(embeded_stories, T_B, d_lproj)
+
+	
+	embeded_question = tf.tile(tf.expand_dims(embeded_question,dim=1),[1,num_of_sentence,1])
+
+	sen_weight = tf.reduce_sum(embeded_question*embeded_stories,reduction_indices=-1,keep_dims=True)
+
+	sen_weight = tf.nn.softmax(sen_weight,dim=1)
+	sen_weight = tf.tile(sen_weight,[1,1,output_dims])
+	if return_sequences:
+		embeded_stories = embeded_stories*sen_weight
+	else:
+		embeded_stories = tf.reduce_sum(embeded_stories*sen_weight,reduction_indices=1) # (batch_size, output_dims)
+
+	return embeded_stories
+
+def getMemoryNetworksMaxPooling(embeded_stories, embeded_question, d_lproj, T_B=None):
 
 	'''
 		embeded_stories: (batch_size, num_of_sentence, num_of_words, embeded_words_dims)
@@ -559,10 +589,9 @@ def getMemoryNetworks(embeded_stories, embeded_question, d_lproj, T_B=None):
 	sen_weight = tf.nn.softmax(sen_weight,dim=1)
 	sen_weight = tf.tile(sen_weight,[1,1,output_dims])
 
-	embeded_stories = tf.reduce_sum(embeded_stories*sen_weight,reduction_indices=1) # (batch_size, output_dims)
+	embeded_stories = tf.reduce_max(embeded_stories*sen_weight,reduction_indices=1) # (batch_size, output_dims)
 
 	return embeded_stories
-
 
 rng = np.random
 rng.seed(1234)
@@ -649,6 +678,7 @@ def getAverageRepresentation(sentence, T_B, d_lproj):
 	else:
 		raise ValueError('Invalid sentence_shape:'+sentence_shape)
 
+	
 	return sentence
 
 
@@ -777,46 +807,46 @@ def getClassifierLoss(T_s, T_q, T_a, answer_index=None, isTest=False):
 		return scores
 
 
-def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
+# def getTripletLoss(T_v, T_q, T_a, answer_index,alpha = 1 ):
 	
-	'''
-		function: getTripletLoss
-		parameters:
-			answer_index: the ground truth index, one hot vector
-		return:
-			loss: tf.float32
-	'''
+# 	'''
+# 		function: getTripletLoss
+# 		parameters:
+# 			answer_index: the ground truth index, one hot vector
+# 		return:
+# 			loss: tf.float32
+# 	'''
 	
-	T_v_shape = T_v.get_shape().as_list()
-	T_q_shape = T_q.get_shape().as_list()
-	T_a_shape = T_a.get_shape().as_list()
+# 	T_v_shape = T_v.get_shape().as_list()
+# 	T_q_shape = T_q.get_shape().as_list()
+# 	T_a_shape = T_a.get_shape().as_list()
 
-	assert T_q_shape == T_v_shape
-
-	
-
-	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
-	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
-	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
+# 	assert T_q_shape == T_v_shape
 
 	
-	T_v = tf.nn.l2_normalize(T_v,1)
-	T_q = tf.nn.l2_normalize(T_q,1)
 
-	T_p = T_v+T_q 
+# 	answer_index = tf.tile(tf.expand_dims(answer_index,dim=-1),[1,1,T_q_shape[-1]]) # sample * numOfChoices * common_space_dim
+# 	right_answer =  tf.reduce_sum(T_a*answer_index,reduction_indices=1)
+# 	error_answer =  tf.reduce_sum(T_a*(1.0-answer_index),reduction_indices=1)
 
-	# --- normalization ---
+	
+# 	T_v = tf.nn.l2_normalize(T_v,1)
+# 	T_q = tf.nn.l2_normalize(T_q,1)
 
-	T_p = tf.nn.l2_normalize(T_p,1)
-	right_answer = tf.nn.l2_normalize(right_answer,1)
-	error_answer = tf.nn.l2_normalize(error_answer,1)
+# 	T_p = T_v+T_q 
 
-	positive = tf.reduce_sum(tf.square(T_p-right_answer),reduction_indices=-1)
-	negative = tf.reduce_sum(tf.square(T_p-error_answer),reduction_indices=-1)
-	loss = alpha + positive - negative
-	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
-	loss = tf.maximum(0.,loss)
-	return loss
+# 	# --- normalization ---
+
+# 	T_p = tf.nn.l2_normalize(T_p,1)
+# 	right_answer = tf.nn.l2_normalize(right_answer,1)
+# 	error_answer = tf.nn.l2_normalize(error_answer,1)
+
+# 	positive = tf.reduce_sum(tf.square(T_p-right_answer),reduction_indices=-1)
+# 	negative = tf.reduce_sum(tf.square(T_p-error_answer),reduction_indices=-1)
+# 	loss = alpha + positive - negative
+# 	# tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
+# 	loss = tf.maximum(0.,loss)
+# 	return loss
 
 def getVideoSemanticEmbedding(x,w2v,T_B,pca_mat=None):
 	'''
@@ -832,7 +862,7 @@ def getVideoSemanticEmbedding(x,w2v,T_B,pca_mat=None):
 	# x = tf.nn.l2_normalize(x,-1)
 
 	if pca_mat is not None:
-		linear_proj = tf.Variable(0.1*pca_mat,dtype='tf.float32',name='visual_linear_proj')
+		linear_proj = tf.Variable(0.1*pca_mat,dtype='float32',name='visual_linear_proj')
 	else:
 		linear_proj = init_weight_variable((input_shape[2],w2v_shape[-1]), init_method='uniform', name='visual_linear_proj')
 
@@ -856,152 +886,6 @@ def getVideoSemanticEmbedding(x,w2v,T_B,pca_mat=None):
 	
 
 	return x
-
-
-# def getRFRecVideoEncoder(x, initial_state, return_sequences=True):
-# 	input_shape = x.get_shape().as_list()
-# 	assert len(input_shape)==3 
-# 	timesteps = input_shape[1]
-# 	input_dims = input_shape[2]
-
-# 	output_dims = initial_state.get_shape().as_list()[-1]
-
-# 	# print('initial_state.get_shape()',initial_state.get_shape())
-# 	# print('x.get_shape()',x.get_shape())
-
-# 	# initialize the parameters
-# 	# W_r,U_r,b_r; W_z, U_z, b_z; W_h, U_h, b_h
-# 	W_r = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_r")
-# 	W_z = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_z")
-# 	W_h = init_weight_variable((input_dims,output_dims),init_method='glorot_uniform',name="W_h")
-
-# 	U_r = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_r")
-# 	U_z = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_z")
-# 	U_h = init_weight_variable((output_dims,output_dims),init_method='orthogonal',name="U_h")
-
-# 	b_r = init_bias_variable((output_dims,),name="b_r")
-# 	b_z = init_bias_variable((output_dims,),name="b_z")
-# 	b_h = init_bias_variable((output_dims,),name="b_h")
-
-
-# 	# batch_size x timesteps x dim -> timesteps x batch_size x dim
-# 	axis = [1,0]+list(range(2,3))  # axis = [1,0,2]
-# 	x = tf.transpose(x, perm=axis) # permutate the input_x --> timestemp, batch_size, input_dims
-
-# 	input_x = tf.TensorArray(
-#             dtype=x.dtype,
-#             size=timesteps,
-#             tensor_array_name='input_x')
-
-# 	if hasattr(input_x, 'unstack'):
-# 		input_x = input_x.unstack(x)
-# 	else:
-# 		input_x = input_x.unpack(x)	
-
-
-# 	hidden_state_t_rfr = tf.TensorArray(
-#             dtype=tf.float32,
-#             size=timesteps,
-#             tensor_array_name='hidden_state_t_rfr')
-
-# 	# if hasattr(hidden_state_t_rfr, 'unstack'):
-# 	# 	hidden_state_t_rfr = hidden_state_t_rfr.unstack(hidden_state_t_rfr)
-# 	# else:
-# 	# 	hidden_state_t_rfr = hidden_state_t_rfr.unpack(hidden_state_t_rfr)
-
-
-# 	def step(time, hidden_state_t_rfr, h_tm1):
-# 		x_t = input_x.read(time) # batch_size * dim
-
-# 		preprocess_x_r = matmul_wx(x_t, W_r, b_r, output_dims)
-# 		preprocess_x_z = matmul_wx(x_t, W_z, b_z, output_dims)
-# 		preprocess_x_h = matmul_wx(x_t, W_h, b_h, output_dims)
-
-# 		r = tf.nn.sigmoid(preprocess_x_r+ matmul_uh(U_r,h_tm1))
-# 		z = tf.nn.sigmoid(preprocess_x_z+ matmul_uh(U_z,h_tm1))
-# 		hh = tf.nn.tanh(preprocess_x_h+ matmul_uh(U_h,h_tm1))
-
-# 		h = (1-z)*hh + z*h_tm1
-
-# 		hidden_state_t_rfr = hidden_state_t_rfr.write(time, h)
-
-# 		return (time+1,hidden_state_t_rfr,h)
-
-	
-
-
-# 	time = tf.constant(0, dtype='int32', name='time')
-
-
-# 	ret_out = tf.while_loop(
-#             cond=lambda time, *_: time < timesteps,
-#             body=step,
-#             loop_vars=(time, hidden_state_t_rfr, initial_state),
-#             parallel_iterations=32,
-#             swap_memory=True)
-
-# 	hidden_state_t_rfr = ret_out[1]
-# 	last_output = ret_out[-1] 
-
-# 	if hasattr(hidden_state_t_rfr, 'stack'):
-# 		outputs = hidden_state_t_rfr.stack()
-# 	else:
-# 		outputs = hidden_state_t_rfr.pack()
-
-# 	outputs = tf.reshape(outputs,(timesteps,-1,output_dims))
-# 	axis = [1,0] + list(range(2,3))
-# 	outputs = tf.transpose(outputs,perm=axis)
-
-# 	print('outputs:',outputs.get_shape().as_list())
-# 	if return_sequences:
-# 		return outputs
-# 	else:
-# 		return last_output
-
-
-
-# def getRFRecClassifierLoss(T_v, T_q, T_a, T_B,
-# 				true_frames_index=None,answer_index=None):
-	
-# 	v_shape = T_v.get_shape().as_list() # batch_size x timestep x output_dims
-# 	q_shape = T_q.get_shape().as_list()
-# 	a_shape = T_a.get_shape().as_list()
-
-# 	numOfChoices = a_shape[1]
-# 	common_space_dim = a_shape[2]
-
-
-
-# 	W_rfr = init_weight_variable((v_shape[-1],2),init_method='glorot_uniform',name="W_rfr")
-# 	b_rfr = init_bias_variable((2,),name="b_rfr")
-
-# 	T_v = tf.nn.l2_normalize(T_v,-1) # l2_normalization
-
-# 	T_v = tf.reshape(T_v,(-1,v_shape[-1]))
-# 	rfr_score = tf.matmul(T_v, W_rfr)+tf.reshape(b_rfr,(1,2))
-# 	rfr_score = tf.reshape(rfr_score,(-1, v_shape[1], 2))
-
-# 	rfr_loss = tf.nn.softmax_cross_entropy_with_logits(labels = true_frames_index, logits = rfr_score)
-
-
-	
-# 	T_v = tf.reshape(T_v,(-1,v_shape[1],v_shape[2]))
-# 	T_v = tf.reduce_sum(T_v,reduction_indices=1)
-# 	T_v = tf.matmul(T_v,T_B)
-
-# 	T_s = tf.nn.l2_normalize(T_v+T_q,1)
-# 	T_a = tf.nn.l2_normalize(T_a,2)
-
-# 	T_s = tf.tile(tf.expand_dims(T_s,dim=1),[1,numOfChoices,1])
-
-# 	T_h = T_s*T_a
-# 	T_h = tf.reduce_sum(T_h, reduction_indices=-1)
-
-# 	qa_score = T_h
-# 	qa_loss = tf.nn.softmax_cross_entropy_with_logits(labels = answer_index, logits = qa_score)
-	
-# 	return rfr_score,rfr_loss,qa_score,qa_loss
-
 
 
 

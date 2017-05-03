@@ -6,62 +6,60 @@ import math
 import MovieQA_benchmark as MovieQA
 import DataUtil
 import ModelUtil
-import SemanticEmbeddingModelUtil as SEModelUtil
+import HierarchicalSemanticEmbeddingModelUtil as HSEModelUtil
 import word2vec as w2v
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 import tensorflow as tf
 from sklearn.decomposition import PCA
 import cPickle as pickle
 import time
 import json
+from collections import namedtuple
+
 def build_model(input_video, input_stories, input_question, input_answer, 
 			v2i,w2v_model,pca_mat=None,d_w2v=300,d_lproj=300,
 			answer_index = None, lr=0.01, question_guided=False):
 
 
-	with tf.variable_scope('share_embedding_matrix') as scope:
+	with tf.variable_scope('video_subtitle_hierarchical_frame_clip_attention') as scope:
 		
 
-		T_B, T_w2v, T_mask, pca_mat = ModelUtil.setWord2VecModelConfiguration(v2i,w2v_model,d_w2v,d_lproj)
+		T_B, T_w2v, T_mask, pca_mat_ = ModelUtil.setWord2VecModelConfiguration(v2i,w2v_model,d_w2v,d_lproj)
 		# encode question
-		embeded_question_words, mask_q = ModelUtil.getEmbeddingWithWord2Vec(input_question, T_w2v, T_mask)
-		embeded_question = ModelUtil.getAverageRepresentation(embeded_question_words,T_B,d_lproj)
-
-
-		# encode video
-		if question_guided:
-			embeded_video = SEModelUtil.getVideoQuestionGuidedSemanticEmbedding(input_video, embeded_question,T_w2v, T_B, pca_mat=pca_mat)
-		else:
-			embeded_video = ModelUtil.getVideoSemanticEmbedding(input_video, T_w2v, T_B, pca_mat=pca_mat) # batch x timesteps x d_w2v
+		embedded_question_words, mask_q = ModelUtil.getEmbeddingWithWord2Vec(input_question, T_w2v, T_mask)
+		embedded_question = HSEModelUtil.getAverageRepresentation(embedded_question_words,T_B,d_lproj)
 
 		# encode stories
-		embeded_stories_words, mask_s = ModelUtil.getEmbeddingWithWord2Vec(input_stories, T_w2v, T_mask)
-		embeded_stories = ModelUtil.getMemoryNetworks(embeded_stories_words, embeded_question, d_lproj, T_B=T_B)
+		embedded_stories_words, mask_s = ModelUtil.getEmbeddingWithWord2Vec(input_stories, T_w2v, T_mask)
+		embedded_stories = ModelUtil.getMemoryNetworks(embedded_stories_words, embedded_question, d_lproj, T_B=T_B, return_sequences=True)
+
+		# encode video
+		# embedded_video = HSEModelUtil.getVideoDualSemanticEmbedding(input_video, T_w2v, embedded_stories, T_B, pca_mat=pca_mat) # batch x timesteps x d_w2v
+		# embedded_video = HSEModelUtil.getVideoHierarchicalSemanticWithAttendQuestion(input_video, T_w2v, embedded_stories, embedded_question, T_B, pca_mat=pca_mat) # batch x timesteps x d_w2v
+		embedded_video = HSEModelUtil.getVideoHierarchicalSemanticWithAttendQuestionExe(input_video, T_w2v, embedded_stories, embedded_question_words, T_B, mask_q, pca_mat=pca_mat)
+		
 
 		# encode answers
-		embeded_answer_words, mask_a = ModelUtil.getEmbeddingWithWord2Vec(input_answer, T_w2v, T_mask)
-		embeded_answer = ModelUtil.getAverageRepresentation(embeded_answer_words,T_B,d_lproj)
-
+		embedded_answer_words, mask_a = ModelUtil.getEmbeddingWithWord2Vec(input_answer, T_w2v, T_mask)
+		embedded_answer = HSEModelUtil.getAverageRepresentation(embedded_answer_words,T_B,d_lproj)
 
 		# get video loss
-		video_loss,video_scores = ModelUtil.getClassifierLoss(embeded_video, embeded_question, embeded_answer, answer_index=answer_index)
+		video_loss,video_scores = ModelUtil.getClassifierLoss(embedded_video, embedded_question, embedded_answer, answer_index=answer_index)
 
-		# get subtitle loss
-		subtitle_loss,subtitle_scores = ModelUtil.getClassifierLoss(embeded_stories, embeded_question, embeded_answer, answer_index=answer_index)
 
-		# late fussion
-		loss = 1.0*(video_loss + subtitle_loss)/2
-
-		scores = 1.0*(video_scores + subtitle_scores)/2
-		
 		# train module
-		loss = tf.reduce_mean(loss)
-		# acc_value = tf.metrics.accuracy(y, embeded_question)
+		loss = tf.reduce_mean(video_loss)
+		# acc_value = tf.metrics.accuracy(y, embedded_question)
+		# optimizer = tf.train.RMSPropOptimizer(lr)
+		# optimizer = tf.train.AdamOptimizer(lr)
+
+		
 		optimizer = tf.train.GradientDescentOptimizer(lr)
+
 		train = optimizer.minimize(loss)
-		return train,loss,scores
+		return train,loss,video_scores
 		
 def linear_project_pca_initialization(hf,  feature_shape, d_w2v=300, output_path=None):
 
@@ -97,7 +95,7 @@ def exe_model(sess, data, batch_size, v2i, hf, feature_shape, stories, story_sha
 	for batch_idx in xrange(num_batch):
 		batch_qa = data[batch_idx*batch_size:min((batch_idx+1)*batch_size,total_data)]
 		
-		data_q,data_a,data_y = DataUtil.getBatchIndexedQAs(batch_qa,v2i, nql=nql, nqa=nqa, numOfChoices=numberOfChoices)
+		data_q,data_a,data_y = DataUtil.getBatchIndexedQAs_return(batch_qa,v2i, nql=nql, nqa=nqa, numOfChoices=numberOfChoices)
 		data_s = DataUtil.getBatchIndexedStories(batch_qa,stories,v2i,story_shape)
 		data_v = DataUtil.getBatchVideoFeatureFromQid(batch_qa, hf, feature_shape)
 		if train is not None:
@@ -125,35 +123,26 @@ def exe_model(sess, data, batch_size, v2i, hf, feature_shape, stories, story_sha
 
 
 
-def train_model(hf,f_type,nql=25,nqa=32,numberOfChoices=5,
+def train_model(train_stories,val_stories,v2i,trained_video_QAs,val_video_QAs,hf,f_type,nql=25,nqa=32,numberOfChoices=5,
 		feature_shape=(16,1024,7,7),
 		batch_size=8,total_epoch=100,
-		lr=0.01,question_guided=False,pca_mat_init_file=None,pretrained_model=None):
+		lr=0.01,pretrained_model=False,pca_mat_init_file=None):
 	
 
-	mqa = MovieQA.DataLoader()
-	stories_for_create_dict, full_video_QAs = mqa.get_story_qa_data('full', 'subtitle')
-	stories_for_create_dict = DataUtil.preprocess_stories(stories_for_create_dict,max_words=40)
+	
+
 
 	w2v_mqa_model_filename = './model/movie_plots_1364.d-300.mc1.w2v'
 	w2v_model = w2v.load(w2v_mqa_model_filename, kind='bin')
 
 
-	# Create vocabulary
-	v2i = DataUtil.create_vocabulary_word2vec(full_video_QAs, stories_for_create_dict, 
-		word_thresh=1, w2v_vocab=w2v_model, v2i={'': 0, 'UNK':1})
-
-	# get 'video-based' QA task training set
-	train_movies, trained_video_QAs = mqa.get_video_list('train', 'all_clips')  # key: 'train:<id>', value: list of related clips
-	val_movies, val_video_QAs = mqa.get_video_list('val', 'all_clips')
-
-
-	train_stories, val_stories = DataUtil.split_stories(stories_for_create_dict,train_movies,val_movies)
-
-	train_stories,max_sentences,max_words = DataUtil.data_in_matrix_form(train_stories, v2i)
-
-	val_stories,_,_ = DataUtil.data_in_matrix_form(val_stories, v2i)
-
+	'''
+		model parameters
+	'''
+	size_voc = len(v2i)
+	max_sentences = 3660
+	max_words = 40
+	
 	story_shape = (max_sentences,max_words)
 
 	size_voc = len(v2i)
@@ -179,8 +168,7 @@ def train_model(hf,f_type,nql=25,nqa=32,numberOfChoices=5,
 	train,loss,scores = build_model(input_video, input_stories, input_question, input_answer, v2i,w2v_model,
 			pca_mat=pca_mat,
 			d_w2v=300,d_lproj=300,
-			answer_index=y,  lr=lr,
-			question_guided=question_guided)
+			answer_index=y,  lr=lr)
 
 	'''
 		configure && runtime environment
@@ -215,7 +203,6 @@ def train_model(hf,f_type,nql=25,nqa=32,numberOfChoices=5,
 		return train_data,dev_data
 
   	train_data,dev_data = getTrainDevSplit(trained_video_QAs,trdev)
-
 
 
 	
@@ -253,16 +240,23 @@ def train_model(hf,f_type,nql=25,nqa=32,numberOfChoices=5,
 
 
 			#save model
-			if question_guided:
-				export_path = '/home/xyj/usr/local/saved_model/vqa_baseline/video+subtitle_classifier_semantic_qguided'+'_'+f_type+'/'+'lr'+str(lr)+'_f'+str(feature_shape[0])
-			else:
-				export_path = '/home/xyj/usr/local/saved_model/vqa_baseline/video+subtitle_classifier_semantic'+'_'+f_type+'/'+'lr'+str(lr)+'_f'+str(feature_shape[0])
+			export_path = '/home/xyj/usr/local/saved_model/vqa_baseline/video+subtitle_classifier_hierarchical_frame+clip+attention'+'/'+f_type+'_b'+str(batch_size)+'/'+'lr'+str(lr)+'_f'+str(feature_shape[0])
 			if not os.path.exists(export_path):
 				os.makedirs(export_path)
 				print('mkdir %s' %export_path)
 			save_path = saver.save(sess, export_path+'/'+'E'+str(epoch+1)+'_A'+str(total_acc)+'.ckpt')
 			print("Model saved in file: %s" % save_path)
-		
+
+
+def trans(all):
+
+    qa_list = []
+    for dicts in all:
+
+        qa_list.append(
+            QAInfo(dicts['qid'], dicts['questions'], dicts['answers'] , dicts['ground_truth'],
+                   dicts['imdb_key'], dicts['video_clips']))
+    return qa_list		
 
 
 if __name__ == '__main__':
@@ -273,20 +267,46 @@ if __name__ == '__main__':
 	nql=25 # sequences length for question
 	nqa=32 # sequences length for anwser
 	numberOfChoices = 5 # for input choices, one for correct, one for wrong answer
+	QAInfo = namedtuple('QAInfo','qid question answers correct_index imdb_key video_clips')
+	
+
+	v2i = pickle.load(open("/home/wb/movieQA_v2i.pkl","rb"))
+	qa_train = trans(pickle.load(open("/home/wb/data/processed_data/processed_video_qa/process_train.pkl","rb")))
+	qa_val = trans(pickle.load(open("/home/wb/data/processed_data/processed_video_qa/process_val.pkl","rb")))
+	train_stories = pickle.load(open("/home/wb/data/processed_data/processed_video_qa/train_stories.pkl","rb"))
+	val_stories = pickle.load(open("/home/wb/data/processed_data/processed_video_qa/val_stories.pkl","rb"))
 
 	lr = 0.01
 	'''
 	---------------------------------
+	224x224 vgg feature
 	'''
+
+	# video_feature_dims=512
+	# timesteps_v=16 # sequences length for video
+	# hight = 7
+	# width = 7
+	# feature_shape = (timesteps_v,video_feature_dims,hight,width)
+
+	# f_type = '224x224_VGG'
+	# feature_path = '/home/xyj/usr/local/data/movieqa/224x224_movie_vgg_'+str(timesteps_v)+'f.h5'
+	# pca_mat_init_file = '/home/xyj/usr/local/code/VideoQA/model/224x224_vgg_pca_mat.pkl'
+
+
+	'''
+	---------------------------------
+	224x224 google feature
+	'''
+
 	video_feature_dims=1024
 	timesteps_v=16 # sequences length for video
 	hight = 7
 	width = 7
 	feature_shape = (timesteps_v,video_feature_dims,hight,width)
 
-	f_type = 'GoogLeNet'
-	feature_path = '/home/xyj/usr/local/data/movieqa/movie_google_'+str(timesteps_v)+'f.h5'
-	pca_mat_init_file = '/home/xyj/usr/local/code/VideoQA/model/google_pca_mat.pkl'
+	f_type = '224x224_GoogLeNet'
+	feature_path = '/home/xyj/usr/local/data/movieqa/224x224_movie_google_'+str(timesteps_v)+'f.h5'
+	pca_mat_init_file = '/home/xyj/usr/local/code/VideoQA/model/224x224_google_pca_mat.pkl'
 
 	'''
 	---------------------------------
@@ -304,15 +324,28 @@ if __name__ == '__main__':
 	'''
 	---------------------------------
 	'''
+	# video_feature_dims=1024
+	# timesteps_v=16 # sequences length for video
+	# hight = 7
+	# width = 7
+	# feature_shape = (timesteps_v,video_feature_dims,hight,width)
+
+	# f_type = 'GoogLeNet'
+	# feature_path = '/home/xyj/usr/local/data/movieqa/movie_google_'+str(timesteps_v)+'f.h5'
+	# pca_mat_init_file = '/home/xyj/usr/local/code/VideoQA/model/google_pca_mat.pkl'
+
+	'''
+	---------------------------------
+	'''
 	hf = h5py.File(feature_path,'r')
 
 
-	# pretrained_model = '/home/xyj/usr/local/saved_model/vqa_baseline/video+subtitle_classifier_semantic_HybridCNN/lr0.01_f16/E10_A0.36230248307.ckpt'
+	# pretrained_model = '/home/xyj/usr/local/saved_model/vqa_baseline/video+subtitle_classifier_hierarchical_frame+clip+attention/224x224_VGG_b8/lr0.005_f16/E20_A0.372460496614.ckpt'
 	pretrained_model = None
-	train_model(hf,f_type,nql=25,nqa=32,numberOfChoices=5,
+	train_model(train_stories,val_stories,v2i,qa_train,qa_val,hf,f_type,nql=25,nqa=32,numberOfChoices=5,
 		feature_shape=feature_shape,lr=lr,
-		batch_size=8,total_epoch=100,
-		pretrained_model=pretrained_model,pca_mat_init_file=pca_mat_init_file,question_guided=False)
+		batch_size=8,total_epoch=20,
+		pretrained_model=pretrained_model,pca_mat_init_file=pca_mat_init_file)
 	
 
 	

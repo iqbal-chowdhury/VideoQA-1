@@ -437,7 +437,62 @@ def split_stories(full_stories,train_movies,val_movies):
 	print('num of val stories:',len(val_stories))
 	return train_stories,val_stories
 
+def getBatchIndexedQAs_return(batch_qas_list,v2i, nql=16, nqa=10, numOfChoices=2):
+    '''
+        batch_qas_list: list of qas
+        QA_words: all the QAs, contains question words and answer words
+        v2i: vocabulary to index
+        nql: length of question
+        nqa: length of answer
+        numOfChoices: number of Choices utilized per QA, default set to 2 ==> right/wrong
 
+        return: questions, answers, ground_truth
+            both of them are numeric indexed
+            ground_truth is one hot vector
+    '''
+
+    batch_size = len(batch_qas_list)
+    questions = np.zeros((batch_size,nql),dtype='int32')
+    answers = np.zeros((batch_size,numOfChoices,nqa),dtype='int32')
+    ground_truth = np.zeros((batch_size,numOfChoices),dtype='int32')
+
+    for idx, qa in enumerate(batch_qas_list):
+        # set question 
+
+        questions[idx][:]=qa.question
+        
+        if numOfChoices==5:
+            
+            # set correct answer
+            #correct_index = qa.correct_index
+            ground_truth[idx]=qa.correct_index
+            for ans_idx, ans in enumerate(qa.answers):
+                answers[idx][ans_idx][:]=ans
+
+    
+        else:
+            raise ValueError('Invalid numOfChoices: ' + numOfChoices)
+
+    return questions,answers,ground_truth
+
+def getTestBatchIndexedQAs_return(batch_qas_list,v2i, nql=16, nqa=10, numOfChoices=2):
+
+    batch_size = len(batch_qas_list)
+    questions = np.zeros((batch_size,nql),dtype='int32')
+    answers = np.zeros((batch_size,numOfChoices,nqa),dtype='int32')
+
+    for idx, qa in enumerate(batch_qas_list):
+
+        questions[idx][:]=qa.question
+        
+        if numOfChoices==5:
+            
+            for ans_idx, ans in enumerate(qa.answers):
+                answers[idx][ans_idx][:]=ans
+        else:
+            raise ValueError('Invalid numOfChoices: ' + numOfChoices)
+
+    return questions,answers  
 def main():
 	
 	task = 'video-based' # video-based or subtitle-based
